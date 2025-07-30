@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Pomovibes",
+  "version": "1.0.0",
+  "description": "A relaxing, aesthetic Pomodoro timer with study tracking and to-do list.",
+  "permissions": ["storage", "alarms", "activeTab", "notifications", "offscreen", "identity"],
+  "background": { "service_worker": "background.js" },
+  "oauth2": {
+    "client_id": "cb2e07fa244f45dc91a5644f25685cd7",
+    "scopes": [
+      "user-read-private",
+      "user-read-email"
+    ]
+  },
+  "action": {
+    "default_popup": "dist/index.html",
+    "default_title": "Pomovibes"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/floatingTimer.js"],
+      "css": ["src/styles/custom.css"]
+    }
+  ],  "web_accessible_resources": [
+    {
+      "resources": ["assets/bell_sound.mp3", "assets/background_music.mp3", "assets/brown_noise.mp3", "assets/white_noise.mp3", "dist/*"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "icons": {
+    "16": "assets/Pomodoro_Logo_16.png",
+    "48": "assets/Pomodoro_Logo_48.png",
+    "128": "assets/Pomodoro_Logo_128.png"
+  }
+}

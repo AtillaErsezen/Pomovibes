@@ -1,0 +1,143 @@
+#pomodoro-floating-timer {
+  transition: opacity 0.3s ease-in-out;
+}
+
+/* Enhanced, aesthetic scrollbar for extension popup - scoped to fancy-scrollbar class */
+.fancy-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  background: transparent;
+  border-radius: 10px;
+  transition: all 0.3s ease;
+}
+
+.fancy-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 4px 0;
+  border-radius: 10px;
+}
+
+/* Light mode scrollbar */
+html:not(.dark) .fancy-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(to bottom, #c084fc, #8b5cf6) !important;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+}
+
+html:not(.dark) .fancy-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(to bottom, #a855f7, #7c3aed) !important;
+}
+
+/* Dark mode scrollbar */
+html.dark .fancy-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(to bottom, #7e22ce, #4c1d95) !important;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: all 0.3s ease;
+}
+
+html.dark .fancy-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(to bottom, #9333ea, #6b21a8) !important;
+}
+
+.scroll-smooth {
+  scroll-behavior: smooth;
+}
+
+/* Firefox support */
+.fancy-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #8b5cf6 transparent;
+}
+
+html.dark .fancy-scrollbar {
+  scrollbar-color: #7e22ce transparent;
+}
+
+/* Specific class for fancy scrollbar */
+.fancy-scrollbar::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.fancy-scrollbar::-webkit-scrollbar-thumb {
+  opacity: 0.6;
+  transition: opacity 0.3s ease;
+}
+
+.fancy-scrollbar:hover::-webkit-scrollbar-thumb {
+  opacity: 1;
+}
+
+/* Add animated pulse effect to scrollbar on hover */
+@keyframes scrollPulse {
+  0% { box-shadow: 0 0 0 rgba(139, 92, 246, 0); }
+  50% { box-shadow: 0 0 5px rgba(139, 92, 246, 0.5); }
+  100% { box-shadow: 0 0 0 rgba(139, 92, 246, 0); }
+}
+
+.fancy-scrollbar:hover::-webkit-scrollbar-thumb {  animation: scrollPulse 2s infinite;
+}
+
+/* Add custom styles for the dark mode toggle button */
+.dark-mode-toggle {
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.dark-mode-toggle:hover {
+  transform: scale(1.1);
+  box-shadow: 0 0 10px rgba(255, 193, 7, 0.5);
+}
+
+.dark-mode-toggle.dark:hover {
+  box-shadow: 0 0 12px rgba(239, 246, 255, 0.6);
+}
+
+.dark-mode-toggle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(circle, transparent 60%, rgba(255, 255, 255, 0.2) 100%);
+  opacity: 0;
+  transition: opacity 0.3s;
+  border-radius: 50%;
+  z-index: 1;
+}
+
+.dark-mode-toggle:hover::after {
+  opacity: 1;
+}
+
+.dark-mode-toggle span {
+  position: relative;
+  z-index: 2;
+}
+
+/* Enhanced animation for dark mode toggle */
+@keyframes switchToLight {
+  0% { transform: scale(0.8) rotate(0deg); opacity: 0.8; }
+  50% { transform: scale(1.2) rotate(180deg); opacity: 1; }
+  100% { transform: scale(1) rotate(360deg); opacity: 1; }
+}
+
+@keyframes switchToDark {
+  0% { transform: scale(0.8) rotate(0deg); opacity: 0.8; }
+  50% { transform: scale(1.2) rotate(180deg); opacity: 1; }
+  100% { transform: scale(1) rotate(360deg); opacity: 1; }
+}
+
+.dark-mode-toggle.animate-to-light span {
+  animation: switchToLight 0.7s ease-in-out forwards;
+}
+
+.dark-mode-toggle.animate-to-dark span {
+  animation: switchToDark 0.7s ease-in-out forwards;
+}

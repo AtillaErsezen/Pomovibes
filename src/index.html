@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Aesthetic Pomodoro</title>
+ <style>  html, body {
+    margin: 0;
+    padding: 0;
+    width: 400px;
+    max-height: 600px;
+    font-family: sans-serif;
+    overflow-y: auto; /* ✅ allow vertical scroll */
+    overflow-x: hidden;
+  }
+    /* Apply fancy-scrollbar class to body for scoped scrollbar styles */
+  body.fancy-scrollbar {
+    height: 100%;
+  }
+
+  #root {
+    min-height: 100%;
+    width: 100%;
+  }
+</style>
+
+
+</head>
+<body class="font-sans fancy-scrollbar">
+  <div id="root"></div>
+  <script type="module" src="index.js"></script>
+</body>
+</html>
