@@ -5,10 +5,15 @@
     <title>Offscreen Audio Player</title>
   </head>
   <body>
-    <!-- Hidden audio elements are managed by JavaScript -->
+    <!-- Audio elements -->
     <div id="audioContainer" style="display:none;">
       <!-- Audio elements will be created dynamically -->
     </div>
-    <script src="components/offscreen.js"></script>
+    
+    <!-- Spotify container - not hidden so user can interact with controls -->
+    <div id="spotifyContainer" style="width: 300px; margin: 0 auto;"></div>
+    
+    <!-- Use the Spotify-enabled version of the offscreen handler -->
+    <script src="components/offscreen_spotify.js"></script>
   </body>
 </html>

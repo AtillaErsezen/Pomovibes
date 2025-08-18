@@ -41,10 +41,16 @@ if %ERRORLEVEL% equ 0 (
 echo Building the project...
 npm run build
 if %ERRORLEVEL% equ 0 (
-    echo Build completed successfully. Check the dist/ directory for output.
+    echo Build completed successfully.
 ) else (
     echo Build failed. Check the console for errors.
     exit /b 1
 )
 
-echo Cleanup and rebuild process finished.
+:: Step 4: Copy offscreen files to the build directory
+echo Copying offscreen files to dist...
+if not exist dist\src\components mkdir dist\src\components
+copy src\offscreen.html dist\src\
+copy src\components\offscreen_spotify.js dist\src\components\
+
+echo Cleanup, rebuild, and offscreen file copy process finished.

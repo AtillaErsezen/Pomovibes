@@ -54,7 +54,7 @@ async function redirectToAuthCodeFlow(clientId, stayLoggedIn = false) {
     client_id: clientId,
     response_type: "code",
     redirect_uri,
-    scope: "user-read-private user-read-email",
+    scope: "user-read-private user-read-email user-read-playback-state user-read-recently-played user-read-currently-playing streaming",
     code_challenge_method: "S256",
     code_challenge: challenge
   });
@@ -182,31 +182,175 @@ async function refreshAccessToken(clientId) {
 }
 
 async function getRecentTrack() {
-    const track_data = await fetch(
-        "https://api.spotify.com/v1/me/player/recently-played",
-        {
-            method: "GET",
-            headers: {
-                "Authorization": `Bearer ${await chrome.storage.local.get("access_token")}`,
-                "limit": 1,
+    try {
+        const tokenData = await chrome.storage.local.get("access_token");
+        const accessToken = tokenData.access_token;
+        if (!accessToken) {
+            throw new Error("No access token found");
+        }
+        let currentTrackResponse = await fetch(
+            "https://api.spotify.com/v1/me/player/currently-playing",
+            {
+                method: "GET",
+                headers: {
+                    "Authorization": `Bearer ${accessToken}`
+                }
+            }
+        );
+        if (currentTrackResponse.status === 200) {
+            const currentTrack = await currentTrackResponse.json();
+            if (!currentTrack.item) {
+                throw new Error("No track currently playing");
+            }
+            console.log("Current playing track data:", currentTrack);
+            return {
+                name: currentTrack.item.name,
+                artist: currentTrack.item.artists[0].name,
+                small_image: currentTrack.item.album.images[currentTrack.item.album.images.length - 1].url,
+                wide_image: currentTrack.item.album.images[0].url,
+                uri: currentTrack.item.uri,
+                is_playing: currentTrack.is_playing
+            };
+        } 
+        const recentTrackResponse = await fetch(
+            "https://api.spotify.com/v1/me/player/recently-played?limit=1",
+            {
+                method: "GET",
+                headers: {
+                    "Authorization": `Bearer ${accessToken}`
+                }
+            }
+        );
+        if (!recentTrackResponse.ok) {
+            if (recentTrackResponse.status === 401) {
+                throw new Error("Invalid access token");
+            }
+            throw new Error(`Error fetching recent track: ${recentTrackResponse.status}`);
+        }
+        const recentTrack = await recentTrackResponse.json();
+        console.log("Recently playing track data:", recentTrack);
+        if (!recentTrack.items || recentTrack.items.length === 0) {
+            throw new Error("No recently played tracks found");
+        }
+        return {
+            name: recentTrack.items[0].track.name,
+            artist: recentTrack.items[0].track.artists[0].name,
+            small_image: recentTrack.items[0].track.album.images[recentTrack.items[0].track.album.images.length - 1].url,
+            wide_image: recentTrack.items[0].track.album.images[0].url,
+            uri: recentTrack.items[0].track.uri,
+            is_playing: false
+        };
+    } catch (error) {
+        console.error("Error in getRecentTrack:", error);
+        throw error;
+    }
+}
+async function initializePlayer() {
+    return new Promise((resolve, reject) => {
+        window.onSpotifyWebPlaybackSDKReady = async () => {
+            try {
+                const tokenData = await chrome.storage.local.get("access_token");
+                const accessToken = tokenData.access_token;
+                if (!accessToken) {
+                    reject(new Error("No access token found"));
+                    return;
+                }
+                const player = new window.Spotify.Player({
+                    name: 'Pomovibes Web Player',
+                    getOAuthToken: cb => { cb(accessToken); },
+                    volume: 0.5
+                });
+                player.addListener('initialization_error', ({ message }) => {
+                    console.error('Failed to initialize player:', message);
+                    reject(new Error(`Failed to initialize player: ${message}`));
+                });
+                player.addListener('authentication_error', ({ message }) => {
+                    console.error('Failed to authenticate player:', message);
+                    reject(new Error(`Failed to authenticate player: ${message}`));
+                });
+                player.addListener('account_error', ({ message }) => {
+                    console.error('Premium required:', message);
+                    reject(new Error(`Premium account required: ${message}`));
+                });
+                player.addListener('playback_error', ({ message }) => {
+                    console.error('Failed to perform playback:', message);
+                });
+                player.addListener('ready', ({ device_id }) => {
+                    console.log('Web Playback SDK ready with Device ID:', device_id);
+                    chrome.storage.local.set({ "device_id": device_id });
+                    resolve(player);
+                });
+                player.addListener('not_ready', ({ device_id }) => {
+                    console.log('Device ID is not ready for playback:', device_id);
+                });
+                player.connect();
+            } catch (error) {
+                console.error('Error initializing Spotify player:', error);
+                reject(error);
+            }
+        };
+        
+        // For Chrome extensions, we need to ensure the script has been loaded
+        // This works because we've added the domain to content_security_policy in manifest.json
+        if (!window.Spotify) {
+            console.log("Loading Spotify Web Player SDK script...");
+            // Create a script element with the proper permissions
+            const script = document.createElement('script');
+            script.id = 'spotify-player';
+            script.src = 'https://sdk.scdn.co/spotify-player.js';
+            script.async = true;
+            document.body.appendChild(script);
+        } else {
+            console.log("Spotify Web Player SDK already loaded.");
+            // If SDK is already loaded, trigger the callback manually
+            if (typeof window.onSpotifyWebPlaybackSDKReady === 'function') {
+                window.onSpotifyWebPlaybackSDKReady();
             }
         }
-    );
-    const track = await track_data.json();
-    return {
-        name: track.items[0].track.name,
-        artist: track.items[0].track.artists[0].name,
-        small_image: track.items[0].track.album.images[track.items[0].track.album.images.length - 1].url, //widest to smallest
-        wide_image: track.items[0].track.album.images[0].url,
-    };
+    });
 }
+
+// Function to play a track using Spotify Web Playback SDK
+async function playTrack(uri, deviceId) {
+    try {
+        const tokenData = await chrome.storage.local.get("access_token");
+        const accessToken = tokenData.access_token;
+        
+        if (!deviceId) {
+            const deviceData = await chrome.storage.local.get("device_id");
+            deviceId = deviceData.device_id;
+        }
+        
+        if (!deviceId) {
+            throw new Error("No device ID available");
+        }
+        
+        // Play the track on the device
+        await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+            method: 'PUT',
+            body: JSON.stringify({ uris: [uri] }),
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${accessToken}`
+            }
+        });
+        
+        return true;
+    } catch (error) {
+        console.error("Error playing track:", error);
+        throw error;
+    }
+}
+
 // Export functions and client_id for use in UI
 export {
   redirectToAuthCodeFlow,
   client_id,
   isLoggedIn,
   refreshAccessToken,
-  getRecentTrack
+  getRecentTrack,
+  initializePlayer,
+  playTrack
 };
 
 

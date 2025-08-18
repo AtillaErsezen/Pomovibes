@@ -24,7 +24,7 @@
     }
   ],  "web_accessible_resources": [
     {
-      "resources": ["assets/bell_sound.mp3", "assets/background_music.mp3", "assets/brown_noise.mp3", "assets/white_noise.mp3", "dist/*"],
+      "resources": ["assets/bell_sound.mp3", "assets/background_music.mp3", "assets/brown_noise.mp3", "assets/White-Noise-10min.mp3", "dist/*", "src/offscreen.html", "src/components/offscreen_spotify.js"],
       "matches": ["<all_urls>"]
     }
   ],
@@ -32,5 +32,13 @@
     "16": "assets/Pomodoro_Logo_16.png",
     "48": "assets/Pomodoro_Logo_48.png",
     "128": "assets/Pomodoro_Logo_128.png"
-  }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://api.spotify.com https://accounts.spotify.com; frame-src https://open.spotify.com"
+  },
+  "host_permissions": [
+    "https://api.spotify.com/*",
+    "https://accounts.spotify.com/*",
+    "https://open.spotify.com/*"
+  ]
 }

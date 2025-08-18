@@ -1,13 +1,40 @@
-// Utility: Ensure offscreen document exists.
-async function ensureOffscreen() {
-  const isDocumentPresent = await chrome.offscreen.hasDocument();
-  if (!isDocumentPresent) {
-    await chrome.offscreen.createDocument({
-      url: 'src/offscreen.html',
-      reasons: ['DOM_PARSER', 'AUDIO_PLAYBACK'], // reasons for needing a DOM including audio
-      justification: 'To play bell sound and background sounds for Pomodoro timer.'
+// Utility: Ensure offscreen document exists with specified reasons.
+async function ensureOffscreen(additionalReasons = []) {
+  try {
+    const isDocumentPresent = await chrome.offscreen.hasDocument();
+    
+    // Default reasons
+    const reasons = ['DOM_PARSER', 'AUDIO_PLAYBACK'];
+    
+    // Add any additional reasons without duplicates
+    additionalReasons.forEach(reason => {
+      if (!reasons.includes(reason)) {
+        reasons.push(reason);
+      }
     });
-    console.log('Offscreen document created');
+    
+    if (!isDocumentPresent) {
+      await chrome.offscreen.createDocument({
+        url: 'src/offscreen.html',
+        reasons: reasons, // reasons for needing a DOM including audio
+        justification: 'To play bell sound, background sounds, and handle Spotify playback for Pomodoro timer.'
+      });
+      console.log('Offscreen document created with reasons:', reasons);
+    }
+  } catch (error) {
+    console.error('Error creating offscreen document:', error);
+    // Try to recover by closing any existing document and creating a new one
+    try {
+      await chrome.offscreen.closeDocument();
+      await chrome.offscreen.createDocument({
+        url: 'src/offscreen.html',
+        reasons: ['DOM_PARSER', 'AUDIO_PLAYBACK'],
+        justification: 'To play bell sound, background sounds, and handle Spotify playback for Pomodoro timer.'
+      });
+      console.log('Recovered by recreating offscreen document');
+    } catch (recoveryError) {
+      console.error('Failed to recover offscreen document:', recoveryError);
+    }
   }
 }
 
