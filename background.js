@@ -11,174 +11,267 @@ async function ensureOffscreen() {
   }
 }
 
-// Function to update study minutes in calendar
-function updateStudyMinutes(phase, timeLeft, studyDuration) {
-  // Only update for study phases that are ending or have 5 or fewer minutes left
-  if (phase.startsWith('study') && (timeLeft === 0 || timeLeft <= 5 * 60)) {
-    const date = new Date().toISOString().split('T')[0];
-    
-    chrome.storage.sync.get(['sessions'], (data) => {
-      const sessions = data.sessions || {};
-      
-      // Calculate minutes studied in this phase
-      let minutesStudied = 0;
-      
-      if (timeLeft === 0) {
-        // When the timer reaches 0, we've completed the full study duration
-        minutesStudied = studyDuration;
-      } else {
-        // When we hit the 5-minute mark, record the minutes we've studied so far
-        // but only if we haven't already recorded this session
-        const minutesCompleted = studyDuration - Math.ceil(timeLeft / 60);
-        minutesStudied = minutesCompleted;
+const DEFAULT_STUDY_MINUTES = 25;
+
+// Data that grows or changes every second lives in chrome.storage.local (no size limit with
+// the unlimitedStorage permission, no write-rate limit). Small preferences stay in
+// chrome.storage.sync so they follow the user across devices.
+const LOCAL_KEYS = ['timer', 'lastPhase', 'tasks', 'customCategories', 'lastUsedCategory', 'completedTasks', 'sessions'];
+
+// Reads the timer (local) and settings (sync) together
+function getTimerAndSettings(callback) {
+  chrome.storage.local.get(['timer'], (localData) => {
+    chrome.storage.sync.get(['settings'], (syncData) => {
+      callback({ ...localData, ...syncData });
+    });
+  });
+}
+
+// YYYY-MM-DD in the user's local time zone (toISOString() would use UTC)
+function toLocalDateKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+// Records a finished study session in the calendar: adds its length (the duration it
+// started with) to today's minutes and counts one completed session. Called once,
+// only when a study phase counts down to zero.
+function recordCompletedStudySession(durationSeconds) {
+  const date = toLocalDateKey();
+  const minutesStudied = durationSeconds / 60;
+
+  chrome.storage.local.get(['sessions'], (data) => {
+    const sessions = data.sessions || {};
+    const completedSessions = sessions.completedSessions || {};
+
+    const updated = {
+      ...sessions,
+      [date]: (sessions[date] || 0) + minutesStudied,
+      completedSessions: {
+        ...completedSessions,
+        [date]: (completedSessions[date] || 0) + 1
       }
+    };
+
+    chrome.storage.local.set({ sessions: updated }, () => {
+      console.log(`Updated calendar: ${minutesStudied} minutes studied on ${date}`);
+      // Send message to update calendar UI
+      chrome.runtime.sendMessage({ 
+        type: 'CALENDAR_UPDATE', 
+        sessions: updated,
+        date: date
+      });
       
-      // Ensure we don't double-count minutes if already recorded
-      const existingMinutes = sessions[date] || 0;
-      const phaseKey = `${phase}_${new Date().toISOString()}`;
-      const recordedPhases = sessions.recordedPhases || {};
-      
-      if (!recordedPhases[phaseKey]) {
-        // Update sessions with studied minutes
-        const updated = {
-          ...sessions,
-          [date]: existingMinutes + minutesStudied,
-          recordedPhases: {
-            ...recordedPhases,
-            [phaseKey]: true
-          }
-        };
-        
-        chrome.storage.sync.set({ sessions: updated }, () => {
-          console.log(`Updated calendar: ${minutesStudied} minutes studied on ${date}`);
-          // Send message to update calendar UI
-          chrome.runtime.sendMessage({ 
+      // Also notify all tabs about the update
+      chrome.tabs.query({}, (tabs) => {
+        for (const tab of tabs) {
+          chrome.tabs.sendMessage(tab.id, { 
             type: 'CALENDAR_UPDATE', 
             sessions: updated,
             date: date
-          });
-          
-          // Also notify all tabs about the update
-          chrome.tabs.query({}, (tabs) => {
-            for (const tab of tabs) {
-              chrome.tabs.sendMessage(tab.id, { 
-                type: 'CALENDAR_UPDATE', 
-                sessions: updated,
-                date: date
-              }, () => {
-                if (chrome.runtime.lastError) {
-                  // Ignore errors for tabs that don't have the content script
-                }
-              });
+          }, () => {
+            if (chrome.runtime.lastError) {
+              // Ignore errors for tabs that don't have the content script
             }
           });
-        });
-      }
+        }
+      });
     });
-  }
+  });
 }
 
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'pomodoro') {
-    console.log('Alarm triggered for pomodoro at:', new Date().toISOString());
-    chrome.storage.sync.get(['timer', 'settings'], (data) => {
-      // Safely get settings with fallback
-      const study = data.settings?.study ?? 25;
-      const shortBreak = data.settings?.shortBreak ?? 5;
-      const longBreak = data.settings?.longBreak ?? 15;
-      let timer = data.timer || { state: 'stopped', timeLeft: study * 60, phase: 'study1' };
+// One-time migration: older versions kept everything in chrome.storage.sync. Copy those
+// keys into chrome.storage.local (unless local already has them), then remove them from sync.
+function migrateSyncToLocal(done) {
+  chrome.storage.sync.get(LOCAL_KEYS, (syncData) => {
+    const keys = Object.keys(syncData);
+    if (keys.length === 0) return done();
+    chrome.storage.local.get(keys, (localData) => {
+      const toCopy = {};
+      for (const key of keys) {
+        if (!(key in localData)) toCopy[key] = syncData[key];
+      }
+      chrome.storage.local.set(toCopy, () => {
+        if (chrome.runtime.lastError) {
+          // Keep the sync copy so nothing is lost; the next update will try again
+          console.error('Moving data to local storage failed:', chrome.runtime.lastError.message);
+          return done();
+        }
+        chrome.storage.sync.remove(keys, () => done());
+      });
+    });
+  });
+}
+
+// One-time migration: days recorded before completed sessions were stored get their
+// count calculated once from the current study duration, then never recalculated.
+function migrateCompletedSessions() {
+  chrome.storage.local.get(['sessions'], (localData) => chrome.storage.sync.get(['settings'], (syncData) => {
+    const data = { ...localData, ...syncData };
+    const sessions = data.sessions || {};
+    const study = data.settings?.study >= 1 ? data.settings.study : 25;
+    const completedSessions = { ...(sessions.completedSessions || {}) };
+    // The old per-record dedup list is no longer used and only grows
+    let changed = 'recordedPhases' in sessions;
+
+    for (const key of Object.keys(sessions)) {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(key) && completedSessions[key] === undefined) {
+        completedSessions[key] = Math.floor(sessions[key] / study);
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      const { recordedPhases, ...rest } = sessions;
+      chrome.storage.local.set({ sessions: { ...rest, completedSessions } });
+    }
+  }));
+}
+
+// --- Timer engine ---
+// A running timer stores when its phase ends (endsAt, in ms). Nothing ticks: the popup and
+// the floating timer work out the remaining time themselves, and a single alarm fires when
+// the phase ends. (Published extensions can't have alarms more often than every 30 seconds.)
+const PHASE_ALARM = 'pomodoro';
+// An alarm can fire a moment before endsAt; treat that as on time
+const END_TOLERANCE_MS = 500;
+
+// Seconds left: running timers count down to endsAt, stopped ones keep timeLeft
+function remainingSeconds(timer, now = Date.now()) {
+  if (timer.state === 'running' && typeof timer.endsAt === 'number') {
+    return Math.max(0, Math.ceil((timer.endsAt - now) / 1000));
+  }
+  return timer.timeLeft;
+}
+
+function durationsFrom(settings) {
+  const valid = (value, fallback) => (value >= 1 ? value : fallback);
+  return {
+    study: valid(settings?.study, DEFAULT_STUDY_MINUTES),
+    shortBreak: valid(settings?.shortBreak, 5),
+    longBreak: valid(settings?.longBreak, 15),
+  };
+}
+
+function nextPhaseFor(phase, settings) {
+  const { study, shortBreak, longBreak } = durationsFrom(settings);
+  const phases = {
+    study1:      ['shortBreak1', shortBreak * 60],
+    shortBreak1: ['study2',      study * 60],
+    study2:      ['shortBreak2', shortBreak * 60],
+    shortBreak2: ['study3',      study * 60],
+    study3:      ['shortBreak3', shortBreak * 60],
+    shortBreak3: ['study4',      study * 60],
+    study4:      ['longBreak',   longBreak * 60],
+    longBreak:   ['study1',      study * 60],
+  };
+  return phases[phase] || ['study1', study * 60];
+}
+
+// Saves the timer, schedules (or clears) the end-of-phase alarm, and tells the popup
+function saveTimer(timer, done) {
+  chrome.storage.local.set({ timer }, () => {
+    chrome.alarms.clear(PHASE_ALARM, () => {
+      const finish = () => {
+        chrome.runtime.sendMessage({ type: 'TIMER_UPDATE', timer });
+        if (done) done();
+      };
       if (timer.state === 'running') {
-        const tickedPhase = timer.phase;
-        // Re-check right before acting: if the user stopped or reset the timer while this
-        // tick was in flight, drop it so the bell never rings for a timer that didn't finish.
-        chrome.storage.sync.get(['timer'], (latest) => {
-          if (!latest.timer || latest.timer.state !== 'running' || latest.timer.phase !== tickedPhase) {
-            console.log('Timer stopped or reset during tick, skipping');
-            return;
-          }
-
-          timer.timeLeft = Math.max(0, timer.timeLeft - 1);
-          console.log('Tick: timeLeft updated to', timer.timeLeft);
-
-          // Check for study phase and update calendar when 5 minutes or less remain
-          if (timer.phase.startsWith('study') && (timer.timeLeft === 5 * 60 || timer.timeLeft === 0)) {
-            updateStudyMinutes(timer.phase, timer.timeLeft, study);
-          }
-
-          if (timer.timeLeft === 0) {
-            console.log('Session ended, playing bell sound');
-            chrome.storage.local.get(['customBellSound'], async (result) => {
-              const audioSource = result.customBellSound || chrome.runtime.getURL('assets/bell_sound.mp3');
-              // Ensure the offscreen document exists first.
-              await ensureOffscreen();
-              chrome.runtime.sendMessage({ type: 'PLAY_BELL', audioSource });
-            });
-
-            const phases = {
-              study1:      ['shortBreak1',  shortBreak * 60],
-              shortBreak1: ['study2',      study * 60],
-              study2:      ['shortBreak2', shortBreak * 60],
-              shortBreak2: ['study3',      study * 60],
-              study3:      ['shortBreak3', shortBreak * 60],
-              shortBreak3: ['study4',      study * 60],
-              study4:      ['longBreak',   longBreak * 60],
-              longBreak:   ['study1',      study * 60],
-            };
-            const [nextPhase, nextTime] = phases[timer.phase] || ['study1', study * 60];
-            timer = {
-              state: 'running',
-              timeLeft: nextTime,
-              phase: nextPhase,
-            };
-            console.log('Transitioned to next phase:', timer.phase);
-          }
-          chrome.storage.sync.set({ timer }, () => {
-            console.log('Timer state saved:', timer);
-          
-            // Send both TIMER_TICK and TIMER_UPDATE messages for better UI synchronization
-            chrome.runtime.sendMessage({ type: 'TIMER_TICK', timeLeft: timer.timeLeft });
-            chrome.runtime.sendMessage({ type: 'TIMER_UPDATE', timer });
-          
-            // only send FLOATING_TIMER update if enabled
-            chrome.storage.sync.get(['floatingTimerEnabled'], (data) => {
-              if (data.floatingTimerEnabled) {
-                chrome.runtime.sendMessage({ type: 'FLOATING_TIMER', timeLeft: timer.timeLeft });
-              }
-            });
-          
-            // send message to all open tabs...
-            chrome.tabs.query({}, (tabs) => {
-              for (const tab of tabs) {
-                chrome.tabs.sendMessage(tab.id, { type: 'TIMER_TICK', timeLeft: timer.timeLeft }, (response) => {
-                  if (chrome.runtime.lastError) {
-                    console.warn(`No content script in tab ${tab.id}:`, chrome.runtime.lastError.message);
-                  }
-                });
-              
-                // Send full timer state update to tabs
-                chrome.tabs.sendMessage(tab.id, { type: 'TIMER_UPDATE', timer }, (response) => {
-                  if (chrome.runtime.lastError) {
-                    // Ignore errors for tabs that don't have the content script
-                  }
-                });
-              
-                chrome.storage.sync.get(['floatingTimerEnabled'], (data) => {
-                  if (data.floatingTimerEnabled) {
-                    chrome.tabs.sendMessage(tab.id, { type: 'FLOATING_TIMER', timeLeft: timer.timeLeft }, (response) => {
-                      if (chrome.runtime.lastError) {
-                        console.warn(`No content script in tab ${tab.id}:`, chrome.runtime.lastError.message);
-                      }
-                    });
-                  }
-                });
-              }
-            });
-          });
-        });
+        chrome.alarms.create(PHASE_ALARM, { when: timer.endsAt }, finish);
       } else {
-        console.log('Timer is not running, state:', timer.state);
+        finish();
       }
     });
+  });
+}
+
+function playBell() {
+  chrome.storage.local.get(['customBellSound'], async (result) => {
+    const audioSource = result.customBellSound || chrome.runtime.getURL('assets/bell_sound.mp3');
+    // Ensure the offscreen document exists first.
+    await ensureOffscreen();
+    chrome.runtime.sendMessage({ type: 'PLAY_BELL', audioSource });
+  });
+}
+
+// Every change to the timer (start, stop, reset, end of phase) runs through this queue,
+// one at a time, so e.g. a Stop can't slip in between "the phase is due" and its write.
+// Each task calls done() when it has finished writing.
+let timerQueue = Promise.resolve();
+function queueTimerTask(task) {
+  timerQueue = timerQueue.then(() => new Promise((done) => task(done))).catch((error) => {
+    console.error('Timer task failed:', error);
+  });
+}
+
+// Ends the phase if it is due: records a finished study session, rings the bell once,
+// and starts the next phase. The alarm and the popup's 0:00 check can both call this;
+// the second call finds the next phase already running and does nothing.
+function finishPhaseIfDue() {
+  queueTimerTask((done) => {
+    getTimerAndSettings((data) => {
+      const timer = data.timer;
+      if (!timer || timer.state !== 'running') return done();
+
+      // A running timer saved by an older version has no end time: give it one
+      if (typeof timer.endsAt !== 'number') {
+        return saveTimer({ ...timer, endsAt: Date.now() + timer.timeLeft * 1000 }, done);
+      }
+
+      // Not due yet (e.g. an early check): make sure the alarm is set for the real end
+      if (timer.endsAt - Date.now() > END_TOLERANCE_MS) {
+        return chrome.alarms.create(PHASE_ALARM, { when: timer.endsAt }, done);
+      }
+
+      // Record the finished study session with the length it started with,
+      // not the current setting (which may have changed mid-session)
+      if (timer.phase.startsWith('study')) {
+        recordCompletedStudySession(timer.duration ?? DEFAULT_STUDY_MINUTES * 60);
+      }
+      console.log('Session ended, playing bell sound');
+      playBell();
+
+      const [nextPhase, nextTime] = nextPhaseFor(timer.phase, data.settings);
+      console.log('Transitioned to next phase:', nextPhase);
+      saveTimer(
+        {
+          state: 'running',
+          phase: nextPhase,
+          timeLeft: nextTime,
+          duration: nextTime,
+          endsAt: Date.now() + nextTime * 1000,
+        },
+        done
+      );
+    });
+  });
+}
+
+// Makes sure the alarm matches the saved timer (after an update or a browser restart).
+// A phase that ended while the browser was closed finishes right away.
+function ensureTimerScheduled() {
+  queueTimerTask((done) => {
+    chrome.storage.local.get(['timer'], ({ timer }) => {
+      if (timer && timer.state === 'running') {
+        saveTimer(typeof timer.endsAt === 'number' ? timer : { ...timer, endsAt: Date.now() + timer.timeLeft * 1000 }, done);
+      } else {
+        chrome.alarms.clear(PHASE_ALARM, () => done());
+      }
+    });
+  });
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  migrateSyncToLocal(() => {
+    migrateCompletedSessions();
+    ensureTimerScheduled();
+  });
+});
+
+chrome.runtime.onStartup.addListener(ensureTimerScheduled);
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === PHASE_ALARM) {
+    finishPhaseIfDue();
   } else {
     console.log('Unknown alarm:', alarm.name);
   }
@@ -217,80 +310,57 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   
   if (message.type === 'START_TIMER') {
-    console.log('Received START_TIMER message at:', new Date().toISOString());
-    chrome.storage.sync.get(['timer', 'settings'], (data) => {
-      const settings = data.settings || { study: 25 };
-      let timer = data.timer || { state: 'stopped', timeLeft: settings.study * 60, phase: 'study1' };
-      
-      // Update timer state to running
-      timer.state = 'running';
-      
-      // Create an immediate tick function to avoid the initial delay
-      const immediateTick = () => {
-        // Send an immediate timer update for responsive UI
-        chrome.runtime.sendMessage({ type: 'TIMER_UPDATE', timer });
-        chrome.runtime.sendMessage({ type: 'TIMER_TICK', timeLeft: timer.timeLeft });
+    queueTimerTask((done) => {
+      const finish = () => {
+        sendResponse({ success: true });
+        done();
       };
-      
-      // Call it once immediately
-      immediateTick();
-      
-      // Then set up the regular alarm
-      chrome.storage.sync.set({ timer }, () => {
-        chrome.alarms.clear('pomodoro', () => {
-          // Create alarm with no initial delay
-          chrome.alarms.create('pomodoro', { 
-            delayInMinutes: 0, // Start immediately
-            periodInMinutes: 1 / 60 // Fire every second
-          }, () => {
-            console.log('Alarm created for timer start with no delay');
-            
-            sendResponse({ success: true });
-          });
-        });
+      getTimerAndSettings((data) => {
+        const { study } = durationsFrom(data.settings);
+        const timer = data.timer || { state: 'stopped', timeLeft: study * 60, phase: 'study1' };
+        if (timer.state === 'running' && typeof timer.endsAt === 'number') return finish(); // already running
+        saveTimer(
+          {
+            ...timer,
+            state: 'running',
+            // Remember the length this session started with (kept through pause/resume)
+            duration: timer.duration ?? timer.timeLeft,
+            endsAt: Date.now() + timer.timeLeft * 1000,
+          },
+          finish
+        );
       });
     });
     return true;
   } else if (message.type === 'STOP_TIMER') {
-    console.log('Received STOP_TIMER message');
-    chrome.alarms.clear('pomodoro');
-    sendResponse({ success: true });  } else if (message.type === 'RESET_TIMER') {
-    console.log('Received RESET_TIMER message');
-    chrome.alarms.clear('pomodoro');
-    
-    chrome.storage.sync.get(['settings'], (data) => {
-      const settings = data.settings || { study: 25 };
-      const newTimer = { 
-        state: 'stopped', 
-        timeLeft: settings.study * 60, 
-        phase: 'study1' 
-      };
-      
-      // Update storage with new timer state
-      chrome.storage.sync.set({ timer: newTimer }, () => {
-        console.log('Timer reset to:', newTimer);
-        
-        // Send TIMER_UPDATE message to update UI
-        chrome.runtime.sendMessage({ type: 'TIMER_UPDATE', timer: newTimer });
-        
-        // Update floating timer in all tabs
-        chrome.tabs.query({}, (tabs) => {
-          for (const tab of tabs) {
-            chrome.tabs.sendMessage(tab.id, { 
-              type: 'RESET_TIMER',
-              timer: newTimer
-            }, (response) => {
-              if (chrome.runtime.lastError) {
-                console.warn(`No content script in tab ${tab.id}:`, chrome.runtime.lastError.message);
-              }
-            });
-          }
-        });
-        
+    // Freeze the time from when Stop was pressed, not from when the queue gets to it
+    const stoppedAt = Date.now();
+    queueTimerTask((done) => {
+      const finish = () => {
         sendResponse({ success: true });
+        done();
+      };
+      chrome.storage.local.get(['timer'], ({ timer }) => {
+        if (!timer || timer.state !== 'running') return chrome.alarms.clear(PHASE_ALARM, finish);
+        // Freeze the remaining time; endsAt only applies while running
+        const { endsAt, ...rest } = timer;
+        saveTimer({ ...rest, state: 'stopped', timeLeft: remainingSeconds(timer, stoppedAt) }, finish);
       });
     });
-    
-    return true; // Required for async sendResponse
+    return true;
+  } else if (message.type === 'RESET_TIMER') {
+    queueTimerTask((done) => {
+      chrome.storage.sync.get(['settings'], (data) => {
+        const { study } = durationsFrom(data.settings);
+        saveTimer({ state: 'stopped', timeLeft: study * 60, phase: 'study1' }, () => {
+          sendResponse({ success: true });
+          done();
+        });
+      });
+    });
+    return true;
+  } else if (message.type === 'CHECK_TIMER') {
+    // Sent by the popup / floating timer when they reach 0:00, in case the alarm is late
+    finishPhaseIfDue();
   }
 });
