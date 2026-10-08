@@ -5,7 +5,6 @@ import Calendar from './components/Calendar';
 import Settings from './components/Settings';
 import Quote from './components/Quote';
 import BackgroundMusic from './components/BackgroundMusic';
-import SpotifyPlayer from './components/SpotifyPlayer';
 import './styles/tailwind.css';
 import './styles/custom.css';
 import { useState as useStateReact, useEffect as useEffectReact } from 'react'; // For React Strict Mode compatibility
@@ -23,6 +22,7 @@ const App = () => {
     cycles: 4,
   });  const [isEmojiAnimating, setIsEmojiAnimating] = useState(false);
   const [floatingTimerEnabled, setFloatingTimerEnabled] = useState(true);
+  const [infoDialog, setInfoDialog] = useState(null); // { title, message } or null
   const [backgroundMusicEnabled, setBackgroundMusicEnabled] = useState(false);
   // Retrieve floatingTimer and backgroundMusic state on mount (or when dashboard is rendered)
   useEffect(() => {
@@ -31,6 +31,15 @@ const App = () => {
       setFloatingTimerEnabled(data.floatingTimerEnabled ?? true);
       setBackgroundMusicEnabled(data.backgroundMusicEnabled ?? false);
     });
+
+    // Keep the toggle in sync when the floating timer is closed from a page
+    const handleStorageChange = (changes, area) => {
+      if (area === 'sync' && changes.floatingTimerEnabled) {
+        setFloatingTimerEnabled(changes.floatingTimerEnabled.newValue ?? true);
+      }
+    };
+    chrome.storage.onChanged.addListener(handleStorageChange);
+    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
   }, []);
     useEffect(() => {
     chrome.storage.sync.get(['darkMode', 'settings'], (data) => {
@@ -131,6 +140,7 @@ const App = () => {
       <div className={`flex items-center justify-between px-4 py-3 mb-4 rounded-lg shadow-sm group relative transition-all duration-300 hover:shadow-md border-l-4 border-blue-500 ${
         darkMode ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-800'
       }`}>
+        <div className="flex flex-col">
         <div className="flex items-center">
           <span className={`text-sm font-medium mr-2 flex items-center ${
             darkMode ? 'text-gray-200' : 'text-gray-700'
@@ -152,6 +162,10 @@ const App = () => {
             </span>
           )}
         </div>
+        <p className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+          If the timer isn't appearing, try refreshing the page.
+        </p>
+        </div>
           {/* Tooltip */}
         <div className={`absolute left-0 bottom-full mb-2 w-64 rounded-md text-xs p-2 opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none shadow-lg ${
           darkMode ? 'bg-gray-700 text-gray-200' : 'bg-gray-800 text-white'
@@ -169,14 +183,11 @@ const App = () => {
                 setFloatingTimerEnabled(isEnabled);
                 console.log('Floating Timer:', isEnabled);
                 
-                // Show a brief notification when toggled
+                // Show a brief confirmation dialog when toggled on
                 if (isEnabled) {
-                  chrome.notifications.create('floatingTimerEnabled', {
-                    type: 'basic',
-                    iconUrl: chrome.runtime.getURL("assets/Pomodoro_Logo_128.png"),
+                  setInfoDialog({
                     title: 'Floating Timer',
                     message: 'Floating timer has been enabled',
-                    silent: true,
                   });
                 }
               }}          />          <div className={`w-11 h-6 peer-focus:outline-none peer-focus:ring-2 rounded-full peer peer-checked:bg-blue-600 ${
@@ -193,6 +204,7 @@ const App = () => {
         }`}
         style={{ display: 'flex !important', position: 'relative', zIndex: 5 }}
       >
+        <div className="flex flex-col">
         <div className="flex items-center">          <span className={`text-sm font-medium mr-2 flex items-center ${
             darkMode ? 'text-gray-200' : 'text-gray-700'
           }`}>
@@ -213,11 +225,15 @@ const App = () => {
             </span>
           )}
         </div>
+        <p className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+          If the sound isn't playing, try toggling it off and on again.
+        </p>
+        </div>
           {/* Tooltip */}
         <div className={`absolute left-0 bottom-full mb-2 w-64 rounded-md text-xs p-2 opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none shadow-lg ${
           darkMode ? 'bg-gray-700 text-gray-200' : 'bg-gray-800 text-white'
         }`}>
-          Plays background sounds during your Pomodoro sessions to help you focus. Choose between music, brown noise, or white noise in Settings.
+          Plays background sounds during your Pomodoro sessions to help you focus. Choose between brown noise or white noise in Settings.
         </div>
         
         <label className="relative inline-flex items-center cursor-pointer">          <input
@@ -232,14 +248,11 @@ const App = () => {
               
               // Trigger immediate status check for background music
               chrome.runtime.sendMessage({ type: 'BACKGROUND_MUSIC_TOGGLE', enabled: isEnabled });
-                // Show a brief notification when toggled
+                // Show a brief confirmation dialog when toggled on
               if (isEnabled) {
-                chrome.notifications.create('backgroundMusicEnabled', {
-                  type: 'basic',
-                  iconUrl: chrome.runtime.getURL("assets/Pomodoro_Logo_128.png"),
+                setInfoDialog({
                   title: 'Background Sound',
                   message: 'Background sound will play during study sessions. You can choose the sound type in Settings.',
-                  silent: true,
                 });
               }
             }}          />          <div className={`w-11 h-6 peer-focus:outline-none peer-focus:ring-2 rounded-full peer peer-checked:bg-blue-600 ${
@@ -251,8 +264,6 @@ const App = () => {
         </label>
       </div>
 
-      {/* Spotify Player Component */}
-      <SpotifyPlayer darkMode={darkMode} />
       {/* Background Music component moved outside the view conditional to keep it always active */}
       <BackgroundMusic />
       
@@ -279,6 +290,45 @@ const App = () => {
   )}
 </main>
 
+
+      {/* Toggle Confirmation Dialog */}
+      {infoDialog && (
+        <>
+          <div
+            className="fixed inset-0 bg-black bg-opacity-30 z-40"
+            onClick={() => setInfoDialog(null)}
+          ></div>
+          <div
+            role="dialog"
+            aria-modal="true"
+            className={`fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-64 rounded-lg shadow-lg p-4 ${
+              darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'
+            }`}
+          >
+            <button
+              aria-label="Close"
+              className={`absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-full ${
+                darkMode ? 'text-gray-400 hover:bg-gray-700' : 'text-gray-500 hover:bg-gray-100'
+              }`}
+              onClick={() => setInfoDialog(null)}
+            >
+              ✕
+            </button>
+            <h3 className="text-base font-semibold mb-2">{infoDialog.title}</h3>
+            <p className={`text-sm mb-4 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+              {infoDialog.message}
+            </p>
+            <div className="flex justify-end">
+              <button
+                className="px-4 py-1.5 text-sm rounded-md bg-blue-600 hover:bg-blue-700 text-white"
+                onClick={() => setInfoDialog(null)}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="wave-container">
         <div className="wave"></div>

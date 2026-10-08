@@ -1,18 +1,112 @@
-// Sound sources for background audio
-const soundSources = {
-  music: chrome.runtime.getURL("assets/background_music.mp3"),
-  brownNoise: chrome.runtime.getURL("assets/brown_noise.mp3"),
-  whiteNoise: chrome.runtime.getURL("assets/White-Noise-10min.mp3")
-};
+// Background sounds (white and brown noise) are generated in code
+const isNoise = (soundType) => soundType === 'whiteNoise' || soundType === 'brownNoise';
 
 // Create audio elements
 const bellAudio = new Audio();
-const backgroundAudio = new Audio();
-backgroundAudio.loop = true;
 
 // Current background sound state
-let currentSoundType = 'music';
+let currentSoundType = 'brownNoise';
+let currentVolume = 0.3;
 let isBackgroundAudioEnabled = false;
+
+// --- Generated noise (Web Audio) ---
+const NOISE_SECONDS = 10;   // length of the looped buffer
+const CROSSFADE_SECONDS = 0.05; // blends the loop point so it doesn't click
+
+let audioContext = null;
+let noiseGain = null;
+let noiseSource = null;
+const noiseBuffers = {};
+
+// Fills `data` with noise. White: flat spectrum. Brown: integrated white noise (-6 dB/octave).
+const fillNoise = (data, soundType) => {
+  let last = 0;
+  for (let i = 0; i < data.length; i++) {
+    const white = Math.random() * 2 - 1;
+    if (soundType === 'brownNoise') {
+      last = (last + 0.02 * white) / 1.02;
+      data[i] = last * 3.5;
+    } else {
+      data[i] = white * 0.35;
+    }
+  }
+};
+
+const getNoiseBuffer = (soundType) => {
+  if (noiseBuffers[soundType]) return noiseBuffers[soundType];
+
+  const sampleRate = audioContext.sampleRate;
+  const length = NOISE_SECONDS * sampleRate;
+  const fade = Math.floor(CROSSFADE_SECONDS * sampleRate);
+  const buffer = audioContext.createBuffer(2, length, sampleRate);
+
+  for (let channel = 0; channel < 2; channel++) {
+    // Generate a little extra and fade it into the start so the loop is seamless
+    const raw = new Float32Array(length + fade);
+    fillNoise(raw, soundType);
+    const data = buffer.getChannelData(channel);
+    data.set(raw.subarray(0, length));
+    for (let i = 0; i < fade; i++) {
+      const t = i / fade;
+      data[i] = raw[i] * Math.sqrt(t) + raw[length + i] * Math.sqrt(1 - t);
+    }
+  }
+
+  noiseBuffers[soundType] = buffer;
+  return buffer;
+};
+
+const startNoise = (soundType) => {
+  if (!audioContext) {
+    audioContext = new AudioContext();
+    noiseGain = audioContext.createGain();
+    noiseGain.connect(audioContext.destination);
+  }
+  audioContext.resume();
+  noiseGain.gain.value = currentVolume;
+
+  noiseSource = audioContext.createBufferSource();
+  noiseSource.buffer = getNoiseBuffer(soundType);
+  noiseSource.loop = true;
+  noiseSource.connect(noiseGain);
+  noiseSource.start();
+};
+
+const stopNoise = () => {
+  if (noiseSource) {
+    noiseSource.stop();
+    noiseSource.disconnect();
+    noiseSource = null;
+  }
+};
+
+// --- Background sound controls ---
+const isBackgroundPlaying = () => noiseSource !== null;
+
+const playBackground = () => {
+  if (isBackgroundPlaying()) return;
+  startNoise(currentSoundType);
+};
+
+const pauseBackground = () => {
+  stopNoise();
+};
+
+const setBackgroundVolume = (volume) => {
+  currentVolume = volume;
+  if (noiseGain) noiseGain.gain.value = volume;
+};
+
+const setBackgroundSoundType = (soundType) => {
+  // Older saved settings may still say 'music', which no longer exists
+  if (!isNoise(soundType)) soundType = 'brownNoise';
+  if (soundType === currentSoundType) return;
+  const wasPlaying = isBackgroundPlaying();
+  pauseBackground();
+  currentSoundType = soundType;
+  // Keep playing with the new sound if we were already playing
+  if (wasPlaying) playBackground();
+};
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Handle bell sound for timer completion
@@ -33,41 +127,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'BACKGROUND_AUDIO_CONTROL') {
     const { command, volume, soundType } = message;
     
-    // Set volume
     if (volume !== undefined) {
-      backgroundAudio.volume = volume;
+      setBackgroundVolume(volume);
     }
-    
-    // Update source if needed
-    if (soundType && soundType !== currentSoundType) {
-      const wasPlaying = !backgroundAudio.paused;
-      currentSoundType = soundType;
-      backgroundAudio.src = soundSources[soundType] || soundSources.music;
-      backgroundAudio.load();
-      
-      // If we were playing and changed sound, resume playing with new sound
-      if (wasPlaying && command === 'play') {
-        backgroundAudio.play().catch(error => {
-          console.log('Play after source change prevented by browser:', error);
-        });
-      }
+
+    if (soundType) {
+      setBackgroundSoundType(soundType);
     }
-    
+
     // Execute command
     if (command === 'play') {
       isBackgroundAudioEnabled = true;
-      if (backgroundAudio.paused) {
-        backgroundAudio.play().catch(error => {
-          console.log('Background audio play prevented by browser:', error);
-        });
-      }
+      playBackground();
     } else if (command === 'pause') {
       isBackgroundAudioEnabled = false;
-      if (!backgroundAudio.paused) {
-        backgroundAudio.pause();
-      }
+      pauseBackground();
     }
-    
+
     // Send response to confirm action
     sendResponse({ success: true });
     return true;
@@ -79,32 +155,19 @@ setInterval(() => {
   chrome.storage.sync.get(['backgroundMusicEnabled', 'backgroundMusicVolume', 'backgroundSoundType', 'timer'], (data) => {
     const isEnabled = data.backgroundMusicEnabled ?? false;
     const timer = data.timer || { state: 'stopped' };
-    const soundType = data.backgroundSoundType || 'music';
+    const soundType = data.backgroundSoundType || 'brownNoise';
     
     // Only play during study phases when enabled
     const shouldPlay = isEnabled && timer.state === 'running' && timer.phase.startsWith('study');
     
     if (shouldPlay) {
-      // Update source if needed
-      if (soundType !== currentSoundType) {
-        currentSoundType = soundType;
-        backgroundAudio.src = soundSources[soundType] || soundSources.music;
-        backgroundAudio.load();
-      }
-      
-      // Ensure volume is correct
+      setBackgroundSoundType(soundType);
       if (data.backgroundMusicVolume !== undefined) {
-        backgroundAudio.volume = data.backgroundMusicVolume;
+        setBackgroundVolume(data.backgroundMusicVolume);
       }
-      
-      // Resume play if paused
-      if (backgroundAudio.paused) {
-        backgroundAudio.play().catch(error => {
-          console.log('Background audio resume prevented by browser:', error);
-        });
-      }
-    } else if (!shouldPlay && !backgroundAudio.paused) {
-      backgroundAudio.pause();
+      playBackground();
+    } else {
+      pauseBackground();
     }
   });
 }, 3000);

@@ -1,13 +1,6 @@
 import React, { useEffect } from 'react';
 
 const BackgroundMusic = () => {
-  // Sound sources (reference only - actual playback is handled in offscreen.js)
-  const soundSources = {
-    music: chrome.runtime.getURL("assets/background_music.mp3"),
-    brownNoise: chrome.runtime.getURL("assets/brown_noise.mp3"),
-    whiteNoise: chrome.runtime.getURL("assets/White-Noise-10min.mp3")
-  };
-
   // Helper function to ensure offscreen document exists
   const ensureOffscreenExists = async () => {
     const isDocumentPresent = await chrome.offscreen.hasDocument();
@@ -35,7 +28,7 @@ const BackgroundMusic = () => {
         // Extract settings with defaults
         const isEnabled = data.backgroundMusicEnabled ?? false;
         const volume = data.backgroundMusicVolume ?? 0.3;
-        const soundType = data.backgroundSoundType ?? 'music';
+        const soundType = data.backgroundSoundType ?? 'brownNoise';
         const timer = data.timer || { state: 'stopped', phase: 'study1' };
         
         // Determine if we should be playing
@@ -61,7 +54,7 @@ const BackgroundMusic = () => {
       chrome.storage.sync.get(['backgroundMusicEnabled', 'backgroundMusicVolume', 'backgroundSoundType', 'timer'], (data) => {
         const isEnabled = data.backgroundMusicEnabled ?? false;
         const timer = data.timer || { state: 'stopped' };
-        const soundType = data.backgroundSoundType ?? 'music';
+        const soundType = data.backgroundSoundType ?? 'brownNoise';
         const volume = data.backgroundMusicVolume ?? 0.3;
         
         // Only play during study phases when enabled

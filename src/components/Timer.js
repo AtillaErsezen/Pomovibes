@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 const Timer = ({ settings, darkMode }) => {
   const study = settings?.study ?? 25;
@@ -7,18 +7,20 @@ const Timer = ({ settings, darkMode }) => {
     timeLeft: study * 60,
     phase: 'study1',
   });
-  const [focusMode, setFocusMode] = useState(false);  // Local interval for smooth countdown independent of background process
-  const [localInterval, setLocalInterval] = useState(null);
+  const [focusMode, setFocusMode] = useState(false);
+  // Local interval for smooth countdown independent of background process.
+  // A ref (not state) so listeners registered once always see the current interval.
+  const localIntervalRef = useRef(null);
   
   // Function to handle smooth UI countdown
   const startLocalCountdown = () => {
     // Clear any existing interval first
-    if (localInterval) {
-      clearInterval(localInterval);
+    if (localIntervalRef.current) {
+      clearInterval(localIntervalRef.current);
     }
     
     // Start a new countdown interval
-    const interval = setInterval(() => {
+    localIntervalRef.current = setInterval(() => {
       setTimer(prev => {
         if (prev.state === 'running' && prev.timeLeft > 0) {
           return { ...prev, timeLeft: prev.timeLeft - 1 };
@@ -26,15 +28,13 @@ const Timer = ({ settings, darkMode }) => {
         return prev;
       });
     }, 1000);
-    
-    setLocalInterval(interval);
   };
   
   // Stop local countdown
   const stopLocalCountdown = () => {
-    if (localInterval) {
-      clearInterval(localInterval);
-      setLocalInterval(null);
+    if (localIntervalRef.current) {
+      clearInterval(localIntervalRef.current);
+      localIntervalRef.current = null;
     }
   };
   
@@ -44,79 +44,74 @@ const Timer = ({ settings, darkMode }) => {
       
       chrome.storage.sync.get(['timer'], (data) => {
         console.log('Retrieved timer state from storage:', data.timer);
+        let currentTimer = data.timer;
         
         // Check if we need to initialize or update the timer
-        if (!data.timer) {
-          console.log('No timer found in memory, initializing timer with settings:', initialTimer);
-          const initialTimer = {
+        if (!currentTimer) {
+          currentTimer = {
             state: 'stopped',
             timeLeft: settings.study * 60,
             phase: 'study1',
           };
-          
-          chrome.storage.sync.set({ timer: initialTimer });
-          setTimer(initialTimer);
-        }else{
-          console.log('Using existing timer from storage:', data.timer);
-          setTimer(data.timer);
+          console.log('No timer found in memory, initializing timer with settings:', currentTimer);
+          chrome.storage.sync.set({ timer: currentTimer });
+        } else {
+          console.log('Using existing timer from storage:', currentTimer);
         }
+        setTimer(currentTimer);
         
         // If timer is already running, start local countdown
-        if (data.timer.state === 'running') {
+        if (currentTimer.state === 'running') {
           startLocalCountdown();
         }
         
         // Force UI update with latest timer state
         setTimeout(() => {
-          chrome.runtime.sendMessage({ type: 'TIMER_UPDATE', timer: initialTimer });
+          chrome.runtime.sendMessage({ type: 'TIMER_UPDATE', timer: currentTimer });
         }, 200);
       });
     };
     
     initializeTimer();
 
-  // Check if we're starting a new study phase and need to reset the tracking
-  const checkPhaseStart = () => {
-    chrome.storage.sync.get(['timer', 'lastPhase'], (data) => {
-      const currentPhase = data.timer?.phase;
-      const lastPhase = data.lastPhase;
-      
-      // If we're starting a new study phase
-      if (currentPhase && currentPhase.startsWith('study') && currentPhase !== lastPhase) {
-        console.log('Starting new study phase:', currentPhase);
-        // Store the current phase as last phase
-        chrome.storage.sync.set({ lastPhase: currentPhase });
-      }
-    });
-  };
-    // Check phase on initial load
-  checkPhaseStart();
-  
-  // Set up periodic checks for phase and timer state
-  const phaseCheckInterval = setInterval(checkPhaseStart, 5000);
-  
-  // Set up periodic refresh of timer state from storage
-  const timerRefreshInterval = setInterval(() => {
-    chrome.storage.sync.get(['timer'], (data) => {
-      if (data.timer) {
-        const storedTimeLeft = data.timer.timeLeft;
-        const currentTimeLeft = timer.timeLeft;
+    // Check if we're starting a new study phase and need to reset the tracking
+    const checkPhaseStart = () => {
+      chrome.storage.sync.get(['timer', 'lastPhase'], (data) => {
+        const currentPhase = data.timer?.phase;
+        const lastPhase = data.lastPhase;
         
-        // Only update if there's a significant difference (more than 2 seconds)
-        // to avoid unnecessary re-renders
-        if (Math.abs(storedTimeLeft - currentTimeLeft) > 2) {
-          console.log('Auto-refreshing timer state - stored:', storedTimeLeft, 'current:', currentTimeLeft);
-          setTimer(data.timer);
+        // If we're starting a new study phase
+        if (currentPhase && currentPhase.startsWith('study') && currentPhase !== lastPhase) {
+          console.log('Starting new study phase:', currentPhase);
+          // Store the current phase as last phase
+          chrome.storage.sync.set({ lastPhase: currentPhase });
         }
-      }
-    });
-  }, 3000);
-  
-  // Clean up intervals
-  return () => {
-    clearInterval(phaseCheckInterval);
-    clearInterval(timerRefreshInterval);
-  };    const listener = (message) => {
+      });
+    };
+    // Check phase on initial load
+    checkPhaseStart();
+    
+    // Set up periodic checks for phase and timer state
+    const phaseCheckInterval = setInterval(checkPhaseStart, 5000);
+    
+    // Set up periodic refresh of timer state from storage
+    const timerRefreshInterval = setInterval(() => {
+      chrome.storage.sync.get(['timer'], (data) => {
+        if (data.timer) {
+          // Only update if there's a significant difference (more than 2 seconds)
+          // to avoid unnecessary re-renders
+          setTimer((prev) => {
+            if (Math.abs(data.timer.timeLeft - prev.timeLeft) > 2 || data.timer.state !== prev.state) {
+              console.log('Auto-refreshing timer state - stored:', data.timer.timeLeft, 'current:', prev.timeLeft);
+              return data.timer;
+            }
+            return prev;
+          });
+        }
+      });
+    }, 3000);
+
+    const listener = (message) => {
       if (message.type === 'TIMER_UPDATE') {
         console.log('Received TIMER_UPDATE', message.timer);
         
@@ -139,19 +134,17 @@ const Timer = ({ settings, darkMode }) => {
           }
           return prev;
         });
-      } else if (message.type === 'FLOATING_TIMER') {
-        chrome.notifications.create('timerNotification', {
-          type: 'basic',
-          iconUrl: chrome.runtime.getURL("assets/Pomodoro_Logo_128.png"),
-          title: 'Pomodoro Timer',
-          message: `Time Left: ${formatTime(message.timeLeft)}`,
-          silent: true,
-        });
       }
     };
     chrome.runtime.onMessage.addListener(listener);
 
-    return () => chrome.runtime.onMessage.removeListener(listener);
+    // Clean up intervals and listener
+    return () => {
+      clearInterval(phaseCheckInterval);
+      clearInterval(timerRefreshInterval);
+      stopLocalCountdown();
+      chrome.runtime.onMessage.removeListener(listener);
+    };
   }, [settings.study]);
 
   const startTimer = () => {
