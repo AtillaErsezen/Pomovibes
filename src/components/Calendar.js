@@ -254,7 +254,11 @@ const Calendar = ({ darkMode }) => {
             <input
               id="monthInput"
               type="text"
+              inputMode="numeric"
               placeholder="MM"
+              onInput={(e) => {
+                e.target.value = e.target.value.replace(/\D/g, '');
+              }}
               maxLength="2"
               className={`w-10 p-1 rounded-l-lg border-0 font-sans bg-transparent text-center text-sm ${darkMode ? 'text-white' : 'text-gray-900'} placeholder-white focus:outline-none focus:ring-2 focus:ring-blue-500`}
               defaultValue={String(currentDate.getMonth() + 1).padStart(2, '0')}
@@ -269,7 +273,11 @@ const Calendar = ({ darkMode }) => {
             <input
               id="yearInput"
               type="text"
+              inputMode="numeric"
               placeholder="YYYY"
+              onInput={(e) => {
+                e.target.value = e.target.value.replace(/\D/g, '');
+              }}
               maxLength="4"
               className={`w-16 p-1 rounded-r-lg border-0 font-sans bg-transparent text-center text-sm ${darkMode ? 'text-white' : 'text-gray-900'} placeholder-white focus:outline-none focus:ring-2 focus:ring-blue-500`}
               defaultValue={currentDate.getFullYear()}

@@ -88,80 +88,91 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       const longBreak = data.settings?.longBreak ?? 15;
       let timer = data.timer || { state: 'stopped', timeLeft: study * 60, phase: 'study1' };
       if (timer.state === 'running') {
-        timer.timeLeft = Math.max(0, timer.timeLeft - 1);
-        console.log('Tick: timeLeft updated to', timer.timeLeft);
+        const tickedPhase = timer.phase;
+        // Re-check right before acting: if the user stopped or reset the timer while this
+        // tick was in flight, drop it so the bell never rings for a timer that didn't finish.
+        chrome.storage.sync.get(['timer'], (latest) => {
+          if (!latest.timer || latest.timer.state !== 'running' || latest.timer.phase !== tickedPhase) {
+            console.log('Timer stopped or reset during tick, skipping');
+            return;
+          }
 
-        // Check for study phase and update calendar when 5 minutes or less remain
-        if (timer.phase.startsWith('study') && (timer.timeLeft === 5 * 60 || timer.timeLeft === 0)) {
-          updateStudyMinutes(timer.phase, timer.timeLeft, study);
-        }
+          timer.timeLeft = Math.max(0, timer.timeLeft - 1);
+          console.log('Tick: timeLeft updated to', timer.timeLeft);
 
-        if (timer.timeLeft === 0) {
-          console.log('Session ended, playing bell sound');
-          chrome.storage.local.get(['customBellSound'], async (result) => {
-            const audioSource = result.customBellSound || chrome.runtime.getURL('assets/bell_sound.mp3');
-            // Ensure the offscreen document exists first.
-            await ensureOffscreen();
-            chrome.runtime.sendMessage({ type: 'PLAY_BELL', audioSource });
-          });
+          // Check for study phase and update calendar when 5 minutes or less remain
+          if (timer.phase.startsWith('study') && (timer.timeLeft === 5 * 60 || timer.timeLeft === 0)) {
+            updateStudyMinutes(timer.phase, timer.timeLeft, study);
+          }
 
-          const phases = {
-            study1:      ['shortBreak1',  shortBreak * 60],
-            shortBreak1: ['study2',      study * 60],
-            study2:      ['shortBreak2', shortBreak * 60],
-            shortBreak2: ['study3',      study * 60],
-            study3:      ['shortBreak3', shortBreak * 60],
-            shortBreak3: ['study4',      study * 60],
-            study4:      ['longBreak',   longBreak * 60],
-            longBreak:   ['study1',      study * 60],
-          };
-          const [nextPhase, nextTime] = phases[timer.phase] || ['study1', study * 60];
-          timer = {
-            state: 'running',
-            timeLeft: nextTime,
-            phase: nextPhase,
-          };
-          console.log('Transitioned to next phase:', timer.phase);
-        }        chrome.storage.sync.set({ timer }, () => {
-          console.log('Timer state saved:', timer);
+          if (timer.timeLeft === 0) {
+            console.log('Session ended, playing bell sound');
+            chrome.storage.local.get(['customBellSound'], async (result) => {
+              const audioSource = result.customBellSound || chrome.runtime.getURL('assets/bell_sound.mp3');
+              // Ensure the offscreen document exists first.
+              await ensureOffscreen();
+              chrome.runtime.sendMessage({ type: 'PLAY_BELL', audioSource });
+            });
+
+            const phases = {
+              study1:      ['shortBreak1',  shortBreak * 60],
+              shortBreak1: ['study2',      study * 60],
+              study2:      ['shortBreak2', shortBreak * 60],
+              shortBreak2: ['study3',      study * 60],
+              study3:      ['shortBreak3', shortBreak * 60],
+              shortBreak3: ['study4',      study * 60],
+              study4:      ['longBreak',   longBreak * 60],
+              longBreak:   ['study1',      study * 60],
+            };
+            const [nextPhase, nextTime] = phases[timer.phase] || ['study1', study * 60];
+            timer = {
+              state: 'running',
+              timeLeft: nextTime,
+              phase: nextPhase,
+            };
+            console.log('Transitioned to next phase:', timer.phase);
+          }
+          chrome.storage.sync.set({ timer }, () => {
+            console.log('Timer state saved:', timer);
           
-          // Send both TIMER_TICK and TIMER_UPDATE messages for better UI synchronization
-          chrome.runtime.sendMessage({ type: 'TIMER_TICK', timeLeft: timer.timeLeft });
-          chrome.runtime.sendMessage({ type: 'TIMER_UPDATE', timer });
+            // Send both TIMER_TICK and TIMER_UPDATE messages for better UI synchronization
+            chrome.runtime.sendMessage({ type: 'TIMER_TICK', timeLeft: timer.timeLeft });
+            chrome.runtime.sendMessage({ type: 'TIMER_UPDATE', timer });
           
-          // only send FLOATING_TIMER update if enabled
-          chrome.storage.sync.get(['floatingTimerEnabled'], (data) => {
-            if (data.floatingTimerEnabled) {
-              chrome.runtime.sendMessage({ type: 'FLOATING_TIMER', timeLeft: timer.timeLeft });
-            }
-          });
+            // only send FLOATING_TIMER update if enabled
+            chrome.storage.sync.get(['floatingTimerEnabled'], (data) => {
+              if (data.floatingTimerEnabled) {
+                chrome.runtime.sendMessage({ type: 'FLOATING_TIMER', timeLeft: timer.timeLeft });
+              }
+            });
           
-          // send message to all open tabs...
-          chrome.tabs.query({}, (tabs) => {
-            for (const tab of tabs) {
-              chrome.tabs.sendMessage(tab.id, { type: 'TIMER_TICK', timeLeft: timer.timeLeft }, (response) => {
-                if (chrome.runtime.lastError) {
-                  console.warn(`No content script in tab ${tab.id}:`, chrome.runtime.lastError.message);
-                }
-              });
+            // send message to all open tabs...
+            chrome.tabs.query({}, (tabs) => {
+              for (const tab of tabs) {
+                chrome.tabs.sendMessage(tab.id, { type: 'TIMER_TICK', timeLeft: timer.timeLeft }, (response) => {
+                  if (chrome.runtime.lastError) {
+                    console.warn(`No content script in tab ${tab.id}:`, chrome.runtime.lastError.message);
+                  }
+                });
               
-              // Send full timer state update to tabs
-              chrome.tabs.sendMessage(tab.id, { type: 'TIMER_UPDATE', timer }, (response) => {
-                if (chrome.runtime.lastError) {
-                  // Ignore errors for tabs that don't have the content script
-                }
-              });
+                // Send full timer state update to tabs
+                chrome.tabs.sendMessage(tab.id, { type: 'TIMER_UPDATE', timer }, (response) => {
+                  if (chrome.runtime.lastError) {
+                    // Ignore errors for tabs that don't have the content script
+                  }
+                });
               
-              chrome.storage.sync.get(['floatingTimerEnabled'], (data) => {
-                if (data.floatingTimerEnabled) {
-                  chrome.tabs.sendMessage(tab.id, { type: 'FLOATING_TIMER', timeLeft: timer.timeLeft }, (response) => {
-                    if (chrome.runtime.lastError) {
-                      console.warn(`No content script in tab ${tab.id}:`, chrome.runtime.lastError.message);
-                    }
-                  });
-                }
-              });
-            }
+                chrome.storage.sync.get(['floatingTimerEnabled'], (data) => {
+                  if (data.floatingTimerEnabled) {
+                    chrome.tabs.sendMessage(tab.id, { type: 'FLOATING_TIMER', timeLeft: timer.timeLeft }, (response) => {
+                      if (chrome.runtime.lastError) {
+                        console.warn(`No content script in tab ${tab.id}:`, chrome.runtime.lastError.message);
+                      }
+                    });
+                  }
+                });
+              }
+            });
           });
         });
       } else {

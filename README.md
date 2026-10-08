@@ -4,7 +4,7 @@
 
 # Pomovibes
 
-**A relaxing, aesthetic Pomodoro timer with study tracking, to-do lists, and Spotify integration.**
+**A relaxing, aesthetic Pomodoro timer with study tracking, to-do lists, and ambient background sound.**
 
 ![Manifest V3](https://img.shields.io/badge/Chrome%20Extension-Manifest%20V3-4285F4?logo=googlechrome&logoColor=white)
 ![React](https://img.shields.io/badge/React-18.2-61DAFB?logo=react&logoColor=black)
@@ -18,12 +18,12 @@
 
 ## What is this?
 
-Pomovibes is a browser extension that turns the Pomodoro technique into something you'd actually want to open. It pairs a clean, animated timer with the tools you need to stay in flow — a to-do list, a study calendar, daily motivational quotes, ambient background sound, and a built-in Spotify player — all wrapped in a light/dark themed popup.
+Pomovibes is a browser extension that turns the Pomodoro technique into something you'd actually want to open. It pairs a clean, animated timer with the tools you need to stay in flow — a to-do list, a study calendar, daily motivational quotes, and ambient background sound — all wrapped in a light/dark themed popup.
 
 ## Screenshots
 
 <p align="center">
-  <img src="pomovibes_1.png" width="300" alt="Pomovibes timer and Spotify login" />
+  <img src="pomovibes_1.png" width="300" alt="Pomovibes timer" />
   &nbsp;&nbsp;
   <img src="Pomovibes_2.png" width="300" alt="Pomovibes quotes, to-do list, and calendar" />
 </p>
@@ -32,8 +32,7 @@ Pomovibes is a browser extension that turns the Pomodoro technique into somethin
 
 - ⏱️ **Pomodoro Timer** — configurable study, short break, long break durations and cycle count
 - 🪟 **Floating Timer** — an on-page overlay that keeps your progress visible while you browse
-- 🎵 **Spotify Integration** — log in and control playback without leaving the popup
-- 🌙 **Background Sound** — background music, brown noise, or white noise during study sessions
+- 🌙 **Background Sound** — brown noise or white noise during study sessions
 - ✅ **To-Do List** — quick task capture with category tagging
 - 📅 **Study Calendar** — track which days you put in the work
 - 💬 **Daily Quotes** — a little motivation between sessions
@@ -64,15 +63,13 @@ Then load it into Chrome:
 
 1. Go to `chrome://extensions`
 2. Enable **Developer mode**
-3. Click **Load unpacked** and select the repo root (or the `dist/` folder, per your `manifest.json` setup)
-
-> Optional: to enable brown noise / white noise, drop your own audio files into `assets/` — see [BACKGROUND_SOUND_README.md](BACKGROUND_SOUND_README.md) for details.
+3. Click **Load unpacked** and select the repo root (the folder containing `manifest.json`, not `dist/`)
 
 ## Project Structure
 
 ```
 src/
-├── components/     # Timer, Settings, Calendar, TodoList, SpotifyPlayer, BackgroundMusic, Quote...
+├── components/     # Timer, Settings, Calendar, TodoList, BackgroundMusic, Quote...
 ├── content/        # floating timer content script
 ├── data/           # static data (quotes)
 └── styles/         # Tailwind + custom CSS

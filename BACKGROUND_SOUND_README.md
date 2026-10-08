@@ -1,30 +1,16 @@
 # Background Sound Feature
 
-This feature adds support for different background sounds during your Pomodoro study sessions. You can choose between:
+This feature plays a background sound during your Pomodoro study sessions. You can choose between:
 
-1. Background Music (original feature)
-2. Brown Noise (deep, relaxing sound that helps mask distractions)
-3. White Noise (higher-pitched ambient sound good for concentration)
+1. Brown Noise (deep, relaxing sound that helps mask distractions)
+2. White Noise (higher-pitched ambient sound good for concentration)
 
-## Sound Files
+## How the Sounds Are Made
 
-For this feature to work properly, you need to add two sound files that aren't included in this repository:
+Both sounds are generated in code with the Web Audio API (`src/components/offscreen.js`), so no audio files are needed. A 10-second noise buffer is created once and looped, with a short crossfade at the loop point so it doesn't click.
 
-1. `brown_noise.mp3` - A brown noise audio file
-2. `white_noise.mp3` - A white noise audio file
-
-## How to Add Sound Files
-
-1. Find suitable audio files for brown noise and white noise. You can find free audio files on websites like:
-   - freesound.org
-   - pixabay.com
-   - zapsplat.com
-
-2. Download the files and rename them to `brown_noise.mp3` and `white_noise.mp3`
-
-3. Place these files in the `/assets` folder of the extension
-
-4. The files should be loopable and ideally 1-3 minutes in length to avoid large file sizes
+- **White noise** — random samples with equal energy at every frequency.
+- **Brown noise** — white noise passed through a leaky integrator, so energy falls off at higher frequencies (-6 dB/octave).
 
 ## Using the Feature
 

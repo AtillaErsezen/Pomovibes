@@ -1,6 +1,8 @@
 // src/components/Settings.js
 import React, { useState, useEffect } from 'react';
 
+const MAX_BELL_SOUND_BYTES = 10 * 1024 * 1024; // 10MB
+
 const Settings = ({
   settings: initialSettings,
   updateSettings,
@@ -9,7 +11,7 @@ const Settings = ({
 }) => {  const [settings, setSettings] = useState(initialSettings);
   const [selectedFile, setSelectedFile] = useState(null);
   const [backgroundMusicVolume, setBackgroundMusicVolume] = useState(0.3);
-  const [backgroundSoundType, setBackgroundSoundType] = useState('music');
+  const [backgroundSoundType, setBackgroundSoundType] = useState('brownNoise');
   // keep in sync if parent-storage changes
   useEffect(() => {
     chrome.storage.sync.get(['settings', 'backgroundMusicVolume', 'backgroundSoundType'], (data) => {
@@ -17,7 +19,7 @@ const Settings = ({
       if (data.backgroundMusicVolume !== undefined) {
         setBackgroundMusicVolume(data.backgroundMusicVolume);
       }
-      if (data.backgroundSoundType !== undefined) {
+      if (data.backgroundSoundType === 'brownNoise' || data.backgroundSoundType === 'whiteNoise') {
         setBackgroundSoundType(data.backgroundSoundType);
       }
     });
@@ -34,7 +36,7 @@ const Settings = ({
       backgroundSoundType
     }, () => {
       console.log('Settings saved:', settings);
-      console.log('Background music volume saved:', backgroundMusicVolume);
+      console.log('Background sound volume saved:', backgroundMusicVolume);
       console.log('Background sound type saved:', backgroundSoundType);
       // 2) lift up to App.js
       updateSettings(settings);
@@ -45,7 +47,10 @@ const Settings = ({
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
-    if (file && file.type.startsWith('audio/')) {
+    if (file && file.size > MAX_BELL_SOUND_BYTES) {
+      alert('This file is too large. You can\'t upload an audio file bigger than 10MB.');
+      e.target.value = '';
+    } else if (file && file.type.startsWith('audio/')) {
       setSelectedFile(file);
     } else {
       alert('Please select a valid audio file.');
@@ -143,25 +148,6 @@ const Settings = ({
             <div className="flex items-center space-x-2">
               <input
                 type="radio"
-                id="sound-type-music"
-                name="sound-type"
-                value="music"
-                checked={backgroundSoundType === 'music'}
-                onChange={() => {
-                  setBackgroundSoundType('music');
-                  chrome.storage.sync.set({ backgroundSoundType: 'music' });
-                }}
-                className={`w-4 h-4 ${
-                  darkMode ? 'bg-gray-700 border-gray-600' : 'bg-gray-50 border-gray-300'
-                }`}
-              />
-              <label htmlFor="sound-type-music" className="ml-2 text-sm font-sans">
-                Background Music
-              </label>
-            </div>
-            <div className="flex items-center space-x-2">
-              <input
-                type="radio"
                 id="sound-type-brown"
                 name="sound-type"
                 value="brownNoise"
@@ -200,7 +186,7 @@ const Settings = ({
           </div>
         </div>
         
-        {/* Background Music Volume */}
+        {/* Background Sound Volume */}
         <div>
           <label className="block text-sm font-sans mb-1">Background Sound Volume</label>
           <div className="flex items-center space-x-2">
@@ -249,6 +235,9 @@ const Settings = ({
               Upload
             </button>
           </div>
+          <p className={`text-xs font-sans mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+            Maximum file size: 10MB.
+          </p>
         </div>
 
         {/* Save & Close */}

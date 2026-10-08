@@ -4,6 +4,14 @@
   let floatingTimer = null;
   let timeLeft = 25 * 60;
 
+  const removeFloatingTimer = () => {
+    if (!floatingTimer) return;
+    const timerToRemove = floatingTimer;
+    floatingTimer = null;
+    timerToRemove.style.opacity = '0';
+    setTimeout(() => timerToRemove.remove(), 700);
+  };
+
   const createFloatingTimer = () => {
     if (floatingTimer) return; // avoid duplicate creation
     console.log('Creating floating timer...');
@@ -45,14 +53,11 @@
     closeButton.setAttribute('aria-label', 'Close floating timer');
     closeButton.onmouseover = () => (closeButton.style.color = '#ff4444');
     closeButton.onmouseout = () => (closeButton.style.color = 'white');
-    closeButton.onclick = () => {
-      if (floatingTimer) {
-        floatingTimer.style.opacity = '0';
-        setTimeout(() => {
-          floatingTimer.remove();
-          floatingTimer = null;
-        }, 700);
-      }
+    closeButton.onclick = (e) => {
+      e.stopPropagation();
+      // Same as toggling "Floating Timer" off in the popup
+      chrome.storage.sync.set({ floatingTimerEnabled: false });
+      removeFloatingTimer();
     };
 
     floatingTimer.appendChild(timerText);
@@ -105,20 +110,21 @@
       timeLeft = message.timeLeft;
       // Only create/show if enabled, or if already visible (to keep it until STOP)
       chrome.storage.sync.get(['floatingTimerEnabled'], (data) => {
-        if (data.floatingTimerEnabled === true || floatingTimer) {
+        if (data.floatingTimerEnabled === true) {
           updateTimerDisplay();
         }
       });
     }
 
     if (message.type === 'STOP_TIMER' || message.type === 'RESET_TIMER') {
-      if (floatingTimer) {
-        floatingTimer.style.opacity = '0';
-        setTimeout(() => {
-          floatingTimer.remove();
-          floatingTimer = null;
-        }, 700);
-      }
+      removeFloatingTimer();
+    }
+  });
+
+  // Hide the timer on every tab as soon as it's disabled (popup toggle or close button)
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'sync' && changes.floatingTimerEnabled && changes.floatingTimerEnabled.newValue === false) {
+      removeFloatingTimer();
     }
   });
 
@@ -131,14 +137,4 @@
       updateTimerDisplay();
     }
   });
-
-  chrome.runtime.onSuspend.addListener(() => {
-    if (floatingTimer) {
-      floatingTimer.remove();
-      floatingTimer = null;
-    }
-  });
-
-  // When initializing or resetting timer:
-  chrome.storage.sync.set({ timer: { state: 'stopped', timeLeft: settings.study * 60, phase: 'study1' } });
 })();
