@@ -1,27 +1,16 @@
 import React, { useState, useEffect } from 'react';
+import { toLocalDateKey } from '../utils/date';
 
 const Calendar = ({ darkMode }) => {
   const [sessions, setSessions] = useState({});
   const [completedTasks, setCompletedTasks] = useState({});
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [settings, setSettings] = useState({
-    study: 25,
-    shortBreak: 5,
-    longBreak: 15,
-    cycles: 4,
-  });
 
   useEffect(() => {
     // Load initial data
-    const loadData = () => {      chrome.storage.sync.get(['sessions', 'completedTasks', 'settings'], (data) => {
+    const loadData = () => {      chrome.storage.local.get(['sessions', 'completedTasks'], (data) => {
         console.log('Initial data loaded:', data);
         setSessions(data.sessions || {});
-        setSettings(data.settings || {
-          study: 25,
-          shortBreak: 5,
-          longBreak: 15,
-          cycles: 4,
-        });
         const tasks = data.completedTasks || {};
         // Ensure valid date keys
         const cleanedTasks = {};
@@ -47,13 +36,13 @@ const Calendar = ({ darkMode }) => {
 
     // Update sessions for study time
     const updateSessions = () => {
-      chrome.storage.sync.get(['timer'], (data) => {
+      chrome.storage.local.get(['timer'], (data) => {
         const timer = data.timer || { phase: 'longStudy1', state: 'stopped' };
         if (timer.phase.includes('Study') && timer.state === 'running') {
-          const date = new Date().toISOString().split('T')[0];
+          const date = toLocalDateKey();
           setSessions((prev) => {
             const updated = { ...prev, [date]: (prev[date] || 0) + 1 / 60 };
-            chrome.storage.sync.set({ sessions: updated });
+            chrome.storage.local.set({ sessions: updated });
             return updated;
           });
         }
@@ -93,7 +82,7 @@ const Calendar = ({ darkMode }) => {
   useEffect(() => {
     // Listen for storage changes
     const handleStorageChange = (changes, area) => {
-      if (area === 'sync' && changes.completedTasks) {
+      if (area === 'local' && changes.completedTasks) {
         const newValue = changes.completedTasks.newValue || {};
         console.log('Storage changed:', newValue);
         // Clean and update state
@@ -114,7 +103,7 @@ const Calendar = ({ darkMode }) => {
 
   // Log completedTasks for debugging
   useEffect(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = toLocalDateKey();
     console.log('completedTasks state:', completedTasks);
     console.log(`Today's tasks (${today}):`, completedTasks[today] || []);
   }, [completedTasks]);
@@ -145,15 +134,16 @@ const Calendar = ({ darkMode }) => {
 
     for (let day = 1; day <= daysInMonth; day++) {
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      console.log('Rendering date:', dateStr);      const isToday = dateStr === today.toISOString().split('T')[0];
+      console.log('Rendering date:', dateStr);      const isToday = dateStr === toLocalDateKey(today);
       console.log('Is today:', isToday);
       const minutes = sessions[dateStr] || 0;
+      const completedCount = sessions.completedSessions?.[dateStr] || 0;
       console.log('Minutes studied:', minutes);
       const tasks = Array.isArray(completedTasks[dateStr]) ? completedTasks[dateStr] : [];
       console.log('Tasks for date:', tasks);
       const hasStudied = minutes > 0;
-      const prevDate = new Date(year, month, day - 1).toISOString().split('T')[0];
-      const nextDate = new Date(year, month, day + 1).toISOString().split('T')[0];
+      const prevDate = toLocalDateKey(new Date(year, month, day - 1));
+      const nextDate = toLocalDateKey(new Date(year, month, day + 1));
       const prevStudied = sessions[prevDate] > 0;
       const nextStudied = sessions[nextDate] > 0;
       const isStreak = hasStudied && (prevStudied || nextStudied);
@@ -198,7 +188,7 @@ const Calendar = ({ darkMode }) => {
               </p>
               <p className="text-xs font-sans flex items-center justify-between">
                 <span>Completed Sessions:</span>
-                <span className="font-medium">{Math.floor(minutes / settings.study)}</span>
+                <span className="font-medium">{completedCount}</span>
               </p>
               <p className="text-xs font-sans flex items-center justify-between">
                 <span>Tasks Done:</span>
@@ -214,7 +204,8 @@ const Calendar = ({ darkMode }) => {
   };
 
   const changeMonth = (offset) => {
-    setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() + offset)));
+    // Go to the 1st of the target month: setMonth() on e.g. 31 January would overflow to March
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + offset, 1));
   };
 
   const goToDate = () => {

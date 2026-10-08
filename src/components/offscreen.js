@@ -150,9 +150,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
+// Sound preferences live in chrome.storage.sync, the timer in chrome.storage.local
+const getSoundState = (callback) => {
+  chrome.storage.sync.get(['backgroundMusicEnabled', 'backgroundMusicVolume', 'backgroundSoundType'], (syncData) => {
+    chrome.storage.local.get(['timer'], (localData) => callback({ ...syncData, ...localData }));
+  });
+};
+
 // Check and recover audio playback every few seconds
 setInterval(() => {
-  chrome.storage.sync.get(['backgroundMusicEnabled', 'backgroundMusicVolume', 'backgroundSoundType', 'timer'], (data) => {
+  getSoundState((data) => {
     const isEnabled = data.backgroundMusicEnabled ?? false;
     const timer = data.timer || { state: 'stopped' };
     const soundType = data.backgroundSoundType || 'brownNoise';

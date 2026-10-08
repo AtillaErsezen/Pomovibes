@@ -2,6 +2,8 @@
 import React, { useState, useEffect } from 'react';
 
 const MAX_BELL_SOUND_BYTES = 10 * 1024 * 1024; // 10MB
+const DURATION_FIELDS = ['study', 'shortBreak', 'longBreak'];
+const DEFAULT_DURATIONS = { study: 25, shortBreak: 5, longBreak: 15 };
 
 const Settings = ({
   settings: initialSettings,
@@ -27,19 +29,35 @@ const Settings = ({
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setSettings((prev) => ({ ...prev, [name]: parseInt(value) }));
-  };  const handleSaveChanges = () => {
+    // Digits only; keep it as a string while typing so the field can be cleared
+    setSettings((prev) => ({ ...prev, [name]: value.replace(/\D/g, '') }));
+  };
+
+  // Empty or 0 falls back to the last saved value (or the default)
+  const toValidDurations = (values) => {
+    const result = { ...values };
+    for (const key of DURATION_FIELDS) {
+      const value = parseInt(values[key], 10);
+      const saved = parseInt(initialSettings?.[key], 10);
+      result[key] = value >= 1 ? value : (saved >= 1 ? saved : DEFAULT_DURATIONS[key]);
+    }
+    return result;
+  };
+
+  const handleSaveChanges = () => {
+    const validSettings = toValidDurations(settings);
+    setSettings(validSettings);
     // 1) persist to chrome.storage
     chrome.storage.sync.set({ 
-      settings, 
+      settings: validSettings, 
       backgroundMusicVolume,
       backgroundSoundType
     }, () => {
-      console.log('Settings saved:', settings);
+      console.log('Settings saved:', validSettings);
       console.log('Background sound volume saved:', backgroundMusicVolume);
       console.log('Background sound type saved:', backgroundSoundType);
       // 2) lift up to App.js
-      updateSettings(settings);
+      updateSettings(validSettings);
       // 3) close the modal
       onClose();
     });
@@ -99,11 +117,12 @@ const Settings = ({
         <div>
           <label className="block text-sm font-sans">Study (minutes)</label>
           <input
-            type="number"
+            type="text"
+            inputMode="numeric"
             name="study"
-            min="1"
             value={settings.study}
             onChange={handleChange}
+            onBlur={() => setSettings((prev) => toValidDurations(prev))}
             className={`w-full p-3 rounded-lg border font-sans custom-number-input ${
               darkMode
                 ? 'bg-gray-700 text-white border-gray-600'
@@ -114,11 +133,12 @@ const Settings = ({
         <div>
           <label className="block text-sm font-sans">Short Break (minutes)</label>
           <input
-            type="number"
+            type="text"
+            inputMode="numeric"
             name="shortBreak"
-            min="1"
             value={settings.shortBreak}
             onChange={handleChange}
+            onBlur={() => setSettings((prev) => toValidDurations(prev))}
             className={`w-full p-3 rounded-lg border font-sans custom-number-input ${
               darkMode
                 ? 'bg-gray-700 text-white border-gray-600'
@@ -129,11 +149,12 @@ const Settings = ({
         <div>
           <label className="block text-sm font-sans">Long Break (minutes)</label>
           <input
-            type="number"
+            type="text"
+            inputMode="numeric"
             name="longBreak"
-            min="1"
             value={settings.longBreak}
             onChange={handleChange}
+            onBlur={() => setSettings((prev) => toValidDurations(prev))}
             className={`w-full p-3 rounded-lg border font-sans custom-number-input ${
               darkMode
                 ? 'bg-gray-700 text-white border-gray-600'

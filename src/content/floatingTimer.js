@@ -2,9 +2,16 @@
   console.log('Floating Timer content script loaded');
 
   let floatingTimer = null;
-  let timeLeft = 25 * 60;
+  let timer = null; // the saved timer (chrome.storage.local)
+  let enabled = false; // the "Floating Timer" toggle (chrome.storage.sync)
+  let timerKnown = false;
+  let enabledKnown = false;
+  let redrawInterval = null;
+  let askedForEnd = null; // the phase end we've already asked the background to handle
 
   const removeFloatingTimer = () => {
+    clearInterval(redrawInterval);
+    redrawInterval = null;
     if (!floatingTimer) return;
     const timerToRemove = floatingTimer;
     floatingTimer = null;
@@ -56,8 +63,9 @@
     closeButton.onclick = (e) => {
       e.stopPropagation();
       // Same as toggling "Floating Timer" off in the popup
+      enabled = false;
       chrome.storage.sync.set({ floatingTimerEnabled: false });
-      removeFloatingTimer();
+      render();
     };
 
     floatingTimer.appendChild(timerText);
@@ -95,46 +103,56 @@
     document.body.appendChild(floatingTimer);
   };
 
-  const updateTimerDisplay = () => {
-    if (!floatingTimer) createFloatingTimer();
+  // Seconds left: a running timer counts down to its end time; a stopped one keeps timeLeft
+  const secondsLeft = () =>
+    timer.state === 'running' && typeof timer.endsAt === 'number'
+      ? Math.max(0, Math.ceil((timer.endsAt - Date.now()) / 1000))
+      : timer.timeLeft;
+
+  const draw = () => {
     const timerText = document.getElementById('pomodoro-timer-text');
+    const left = secondsLeft();
     if (timerText) {
-      const mins = Math.floor(timeLeft / 60);
-      const secs = timeLeft % 60;
+      const mins = Math.floor(left / 60);
+      const secs = left % 60;
       timerText.textContent = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+    }
+    // At 0:00, ask the background to finish the phase in case its alarm is late
+    if (left === 0 && askedForEnd !== timer.endsAt) {
+      askedForEnd = timer.endsAt;
+      chrome.runtime.sendMessage({ type: 'CHECK_TIMER' });
     }
   };
 
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message.type === 'FLOATING_TIMER') {
-      timeLeft = message.timeLeft;
-      // Only create/show if enabled, or if already visible (to keep it until STOP)
-      chrome.storage.sync.get(['floatingTimerEnabled'], (data) => {
-        if (data.floatingTimerEnabled === true) {
-          updateTimerDisplay();
-        }
-      });
-    }
-
-    if (message.type === 'STOP_TIMER' || message.type === 'RESET_TIMER') {
+  // Shown only while the toggle is on and the timer is running
+  const render = () => {
+    if (!enabled || !timer || timer.state !== 'running') {
       removeFloatingTimer();
+      return;
     }
-  });
+    if (!floatingTimer) createFloatingTimer();
+    draw();
+    if (!redrawInterval) redrawInterval = setInterval(draw, 250);
+  };
 
-  // Hide the timer on every tab as soon as it's disabled (popup toggle or close button)
+  // Follow every change: start/stop/reset/next phase, and the toggle (popup or close button)
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'sync' && changes.floatingTimerEnabled && changes.floatingTimerEnabled.newValue === false) {
-      removeFloatingTimer();
+    if (area === 'local' && changes.timer) {
+      timer = changes.timer.newValue || null;
+      timerKnown = true;
+      render();
+    }
+    if (area === 'sync' && changes.floatingTimerEnabled) {
+      enabled = changes.floatingTimerEnabled.newValue === true;
+      enabledKnown = true;
+      render();
     }
   });
 
-  // Initial sync (optional, for page reloads)
-  chrome.storage.sync.get(['timer', 'floatingTimerEnabled', 'settings'], (data) => {
-    let study = (data.settings && data.settings.study) ? data.settings.study : 25;
-    let timer = data.timer || { state: 'stopped', timeLeft: study * 60, phase: 'study1' };
-    timeLeft = timer.timeLeft;
-    if (data.floatingTimerEnabled === true && timer.state === 'running') {
-      updateTimerDisplay();
-    }
-  });
+  // On page load. A change that arrived meanwhile is newer, so it wins.
+  chrome.storage.local.get(['timer'], (localData) => chrome.storage.sync.get(['floatingTimerEnabled'], (syncData) => {
+    if (!timerKnown) timer = localData.timer || null;
+    if (!enabledKnown) enabled = syncData.floatingTimerEnabled === true;
+    render();
+  }));
 })();

@@ -1,5 +1,12 @@
 import React, { useEffect } from 'react';
 
+// Sound preferences live in chrome.storage.sync, the timer in chrome.storage.local
+const getSoundState = (callback) => {
+  chrome.storage.sync.get(['backgroundMusicEnabled', 'backgroundMusicVolume', 'backgroundSoundType'], (syncData) => {
+    chrome.storage.local.get(['timer'], (localData) => callback({ ...syncData, ...localData }));
+  });
+};
+
 const BackgroundMusic = () => {
   // Helper function to ensure offscreen document exists
   const ensureOffscreenExists = async () => {
@@ -24,7 +31,7 @@ const BackgroundMusic = () => {
       // First ensure the offscreen document exists
       await ensureOffscreenExists();
       
-      chrome.storage.sync.get(['backgroundMusicEnabled', 'backgroundMusicVolume', 'backgroundSoundType', 'timer'], (data) => {
+      getSoundState((data) => {
         // Extract settings with defaults
         const isEnabled = data.backgroundMusicEnabled ?? false;
         const volume = data.backgroundMusicVolume ?? 0.3;
@@ -51,7 +58,7 @@ const BackgroundMusic = () => {
     const checkAndRecoverAudio = async () => {
       await ensureOffscreenExists();
       
-      chrome.storage.sync.get(['backgroundMusicEnabled', 'backgroundMusicVolume', 'backgroundSoundType', 'timer'], (data) => {
+      getSoundState((data) => {
         const isEnabled = data.backgroundMusicEnabled ?? false;
         const timer = data.timer || { state: 'stopped' };
         const soundType = data.backgroundSoundType ?? 'brownNoise';
@@ -83,12 +90,11 @@ const BackgroundMusic = () => {
     
     // Listen to changes in storage
     const storageListener = (changes, area) => {
-      if (area === 'sync' && (
+      if ((area === 'sync' && (
           changes.backgroundMusicEnabled || 
           changes.backgroundMusicVolume || 
-          changes.backgroundSoundType ||
-          changes.timer
-        )) {
+          changes.backgroundSoundType
+        )) || (area === 'local' && changes.timer)) {
         updateMusicPlayback();
       }
     };

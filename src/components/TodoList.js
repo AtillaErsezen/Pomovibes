@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toLocalDateKey } from '../utils/date';
 import ReactDOM from 'react-dom';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 
@@ -45,7 +46,7 @@ const TodoList = ({ darkMode }) => {  const TODO_MAX_LENGTH = 50;
       });
     };
   }, []);    useEffect(() => {
-    chrome.storage.sync.get(['tasks', 'customCategories'], result => {
+    chrome.storage.local.get(['tasks', 'customCategories'], result => {
       if (result.tasks) {
         setTasks(result.tasks);
       }
@@ -55,7 +56,7 @@ const TodoList = ({ darkMode }) => {  const TODO_MAX_LENGTH = 50;
         // Set the current category based on saved categories
         if (result.customCategories.length > 0) {
           // Find the last used category if possible
-          chrome.storage.sync.get(['lastUsedCategory'], lastCategoryResult => {
+          chrome.storage.local.get(['lastUsedCategory'], lastCategoryResult => {
             if (lastCategoryResult.lastUsedCategory) {
               // Check if the last used category still exists
               const categoryExists = result.customCategories.some(
@@ -78,15 +79,15 @@ const TodoList = ({ darkMode }) => {  const TODO_MAX_LENGTH = 50;
   }, []);
 
    useEffect(() => {
-    chrome.storage.sync.set({ tasks });
+    chrome.storage.local.set({ tasks });
   }, [tasks]);
     useEffect(() => {
-    chrome.storage.sync.set({ customCategories });
+    chrome.storage.local.set({ customCategories });
   }, [customCategories]);
   
   // Save the current category when it changes
   useEffect(() => {
-    chrome.storage.sync.set({ lastUsedCategory: category });
+    chrome.storage.local.set({ lastUsedCategory: category });
   }, [category]);
 
   const colorPalette = [
@@ -130,10 +131,10 @@ const TodoList = ({ darkMode }) => {  const TODO_MAX_LENGTH = 50;
     );
     // Find the toggled task
     const toggledTask = updatedTasks.find(t => t.id === id);
-    const today = new Date().toISOString().split('T')[0];
+    const today = toLocalDateKey();
 
     // Update chrome.storage
-    chrome.storage.sync.get(['completedTasks'], result => {
+    chrome.storage.local.get(['completedTasks'], result => {
       let completedTasks = result.completedTasks || {};
       // Ensure completedTasks is an object
       if (Array.isArray(completedTasks) || completedTasks === null) {
@@ -151,7 +152,7 @@ const TodoList = ({ darkMode }) => {  const TODO_MAX_LENGTH = 50;
       if (updatedCompletedTasks.hasOwnProperty('0')) {
         delete updatedCompletedTasks['0'];
       }
-      chrome.storage.sync.set({ completedTasks: updatedCompletedTasks }, () => {
+      chrome.storage.local.set({ completedTasks: updatedCompletedTasks }, () => {
         // Dispatch event with updated data
         window.dispatchEvent(new CustomEvent('completedTasksUpdated', {
           detail: updatedCompletedTasks,

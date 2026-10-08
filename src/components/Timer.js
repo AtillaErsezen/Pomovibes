@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+// Seconds left: a running timer counts down to its end time (endsAt, saved by the
+// background script); a stopped one keeps timeLeft
+const remainingSeconds = (timer, now = Date.now()) =>
+  timer.state === 'running' && typeof timer.endsAt === 'number'
+    ? Math.max(0, Math.ceil((timer.endsAt - now) / 1000))
+    : timer.timeLeft;
+
 const Timer = ({ settings, darkMode }) => {
   const study = settings?.study ?? 25;
   const [timer, setTimer] = useState({
@@ -7,76 +14,29 @@ const Timer = ({ settings, darkMode }) => {
     timeLeft: study * 60,
     phase: 'study1',
   });
+  const [now, setNow] = useState(Date.now());
   const [focusMode, setFocusMode] = useState(false);
-  // Local interval for smooth countdown independent of background process.
-  // A ref (not state) so listeners registered once always see the current interval.
-  const localIntervalRef = useRef(null);
-  
-  // Function to handle smooth UI countdown
-  const startLocalCountdown = () => {
-    // Clear any existing interval first
-    if (localIntervalRef.current) {
-      clearInterval(localIntervalRef.current);
-    }
-    
-    // Start a new countdown interval
-    localIntervalRef.current = setInterval(() => {
-      setTimer(prev => {
-        if (prev.state === 'running' && prev.timeLeft > 0) {
-          return { ...prev, timeLeft: prev.timeLeft - 1 };
-        }
-        return prev;
-      });
-    }, 1000);
-  };
-  
-  // Stop local countdown
-  const stopLocalCountdown = () => {
-    if (localIntervalRef.current) {
-      clearInterval(localIntervalRef.current);
-      localIntervalRef.current = null;
-    }
-  };
-  
+  // The phase end we've already asked the background to handle
+  const askedForEndRef = useRef(null);
+
   useEffect(() => {
-    // More robust timer initialization with better logging
-    const initializeTimer = () => {
-      
-      chrome.storage.sync.get(['timer'], (data) => {
-        console.log('Retrieved timer state from storage:', data.timer);
-        let currentTimer = data.timer;
-        
-        // Check if we need to initialize or update the timer
-        if (!currentTimer) {
-          currentTimer = {
-            state: 'stopped',
-            timeLeft: settings.study * 60,
-            phase: 'study1',
-          };
-          console.log('No timer found in memory, initializing timer with settings:', currentTimer);
-          chrome.storage.sync.set({ timer: currentTimer });
-        } else {
-          console.log('Using existing timer from storage:', currentTimer);
-        }
-        setTimer(currentTimer);
-        
-        // If timer is already running, start local countdown
-        if (currentTimer.state === 'running') {
-          startLocalCountdown();
-        }
-        
-        // Force UI update with latest timer state
-        setTimeout(() => {
-          chrome.runtime.sendMessage({ type: 'TIMER_UPDATE', timer: currentTimer });
-        }, 200);
-      });
-    };
-    
-    initializeTimer();
+    chrome.storage.local.get(['timer'], (data) => {
+      let currentTimer = data.timer;
+      if (!currentTimer) {
+        currentTimer = {
+          state: 'stopped',
+          timeLeft: settings.study * 60,
+          phase: 'study1',
+        };
+        console.log('No timer found in memory, initializing timer with settings:', currentTimer);
+        chrome.storage.local.set({ timer: currentTimer });
+      }
+      setTimer(currentTimer);
+    });
 
     // Check if we're starting a new study phase and need to reset the tracking
     const checkPhaseStart = () => {
-      chrome.storage.sync.get(['timer', 'lastPhase'], (data) => {
+      chrome.storage.local.get(['timer', 'lastPhase'], (data) => {
         const currentPhase = data.timer?.phase;
         const lastPhase = data.lastPhase;
         
@@ -84,125 +44,79 @@ const Timer = ({ settings, darkMode }) => {
         if (currentPhase && currentPhase.startsWith('study') && currentPhase !== lastPhase) {
           console.log('Starting new study phase:', currentPhase);
           // Store the current phase as last phase
-          chrome.storage.sync.set({ lastPhase: currentPhase });
+          chrome.storage.local.set({ lastPhase: currentPhase });
         }
       });
     };
     // Check phase on initial load
     checkPhaseStart();
-    
-    // Set up periodic checks for phase and timer state
     const phaseCheckInterval = setInterval(checkPhaseStart, 5000);
-    
-    // Set up periodic refresh of timer state from storage
-    const timerRefreshInterval = setInterval(() => {
-      chrome.storage.sync.get(['timer'], (data) => {
-        if (data.timer) {
-          // Only update if there's a significant difference (more than 2 seconds)
-          // to avoid unnecessary re-renders
-          setTimer((prev) => {
-            if (Math.abs(data.timer.timeLeft - prev.timeLeft) > 2 || data.timer.state !== prev.state) {
-              console.log('Auto-refreshing timer state - stored:', data.timer.timeLeft, 'current:', prev.timeLeft);
-              return data.timer;
-            }
-            return prev;
-          });
-        }
-      });
-    }, 3000);
 
-    const listener = (message) => {
-      if (message.type === 'TIMER_UPDATE') {
-        console.log('Received TIMER_UPDATE', message.timer);
-        
-        // Update the timer state
-        setTimer(message.timer);
-        
-        // Manage local countdown based on timer state
-        if (message.timer.state === 'running') {
-          startLocalCountdown();
-        } else {
-          stopLocalCountdown();
-        }
-      } else if (message.type === 'TIMER_TICK') {
-        // We're using local countdown for smoother UI updates,
-        // so we only sync with TIMER_TICK if there's a significant difference
-        setTimer((prev) => {
-          if (Math.abs(prev.timeLeft - message.timeLeft) > 2) {
-            console.log('Significant time difference detected, syncing with background');
-            return { ...prev, timeLeft: message.timeLeft };
-          }
-          return prev;
-        });
+    // The background script saves every change (start, stop, reset, next phase)
+    const storageListener = (changes, area) => {
+      if (area === 'local' && changes.timer && changes.timer.newValue) {
+        setTimer(changes.timer.newValue);
       }
     };
-    chrome.runtime.onMessage.addListener(listener);
+    const messageListener = (message) => {
+      if (message.type === 'TIMER_UPDATE' && message.timer) {
+        setTimer(message.timer);
+      }
+    };
+    chrome.storage.onChanged.addListener(storageListener);
+    chrome.runtime.onMessage.addListener(messageListener);
 
-    // Clean up intervals and listener
     return () => {
       clearInterval(phaseCheckInterval);
-      clearInterval(timerRefreshInterval);
-      stopLocalCountdown();
-      chrome.runtime.onMessage.removeListener(listener);
+      chrome.storage.onChanged.removeListener(storageListener);
+      chrome.runtime.onMessage.removeListener(messageListener);
     };
   }, [settings.study]);
 
+  // Redraw while running; the time shown is always worked out from the end time
+  useEffect(() => {
+    if (timer.state !== 'running') return undefined;
+    setNow(Date.now());
+    const interval = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(interval);
+  }, [timer.state, timer.endsAt]);
+
+  const timeLeft = remainingSeconds(timer, now);
+
+  // At 0:00, ask the background to finish the phase in case its alarm is late
+  useEffect(() => {
+    if (timer.state === 'running' && timeLeft === 0 && askedForEndRef.current !== timer.endsAt) {
+      askedForEndRef.current = timer.endsAt;
+      chrome.runtime.sendMessage({ type: 'CHECK_TIMER' });
+    }
+  }, [timeLeft, timer.state, timer.endsAt]);
+
   const startTimer = () => {
-    // Create local timer state first for immediate UI update
-    const updatedTimer = { ...timer, state: 'running' };
-    
-    // Update local state immediately 
-    setTimer(updatedTimer);
-    
-    // Start local countdown for immediate feedback
-    startLocalCountdown();
-    
-    // Then update storage and notify background script
-    chrome.storage.sync.set({ timer: updatedTimer }, () => {
-      chrome.runtime.sendMessage({ type: 'START_TIMER' }, (response) => {
-        if (response?.success) {
-          console.log('Timer started successfully');
-          console.log('sending message to floating timer');
-          chrome.runtime.sendMessage({ type: 'FLOATING_TIMER', timeLeft: updatedTimer.timeLeft });
-        } else if (chrome.runtime.lastError) {
-          console.error('START_TIMER failed:', chrome.runtime.lastError.message);
-          setTimeout(() => chrome.runtime.sendMessage({ type: 'START_TIMER' }), 500);
-        }
-      });
-    });
-  };  
-  const stopTimer = () => {
-    const updatedTimer = { ...timer, state: 'stopped' };
-    
-    // Update local state immediately for instant UI feedback
-    setTimer(updatedTimer);
-    
-    // Stop the local countdown
-    stopLocalCountdown();
-    
-    // Update storage and stop background timer
-    chrome.storage.sync.set({ timer: updatedTimer }, () => {
-      // Immediately update UI through message system
-      chrome.runtime.sendMessage({ type: 'TIMER_UPDATE', timer: updatedTimer });
-      
-      // Send stop message to background script (separate for clarity)
-      chrome.runtime.sendMessage({ type: 'STOP_TIMER' }, (response) => {
-        console.log('Timer stopped successfully');
-      });
+    // Show it running right away; the background saves the real end time
+    setTimer((prev) => ({
+      ...prev,
+      state: 'running',
+      duration: prev.duration ?? prev.timeLeft,
+      endsAt: Date.now() + prev.timeLeft * 1000,
+    }));
+    chrome.runtime.sendMessage({ type: 'START_TIMER' }, () => {
+      if (chrome.runtime.lastError) {
+        console.error('START_TIMER failed:', chrome.runtime.lastError.message);
+        setTimeout(() => chrome.runtime.sendMessage({ type: 'START_TIMER' }), 500);
+      }
     });
   };
-  const resetTimer = () => {
-    const newTimer = { state: 'stopped', timeLeft: study * 60, phase: 'study1' };
-    
-    // Update local state immediately
-    setTimer(newTimer);
-    
-    // Stop any local countdown
-    stopLocalCountdown();
-    
-    // Update storage and reset background timer
-    chrome.storage.sync.set({ timer: { state: 'stopped', timeLeft: settings.study * 60, phase: 'study1' } });
+
+  const stopTimer = () => {
+    setTimer((prev) => {
+      const { endsAt, ...rest } = prev;
+      return { ...rest, state: 'stopped', timeLeft: remainingSeconds(prev) };
+    });
     chrome.runtime.sendMessage({ type: 'STOP_TIMER' });
+  };
+
+  const resetTimer = () => {
+    setTimer({ state: 'stopped', timeLeft: study * 60, phase: 'study1' });
     chrome.runtime.sendMessage({ type: 'RESET_TIMER' });
   };
 
@@ -215,7 +129,8 @@ const Timer = ({ settings, darkMode }) => {
   };
 
   const formatPhase = (phase) => {
-    const [type, num] = phase.match(/([a-zA-Z]+)(\d+)/)?.slice(1) || ['study', '1'];
+    // 'longBreak' has no number, so the digits are optional
+    const [type, num] = phase.match(/^([a-zA-Z]+)(\d*)$/)?.slice(1) || ['study', '1'];
     const formattedType =
       type === 'study'
         ? 'Study Phase'
@@ -229,15 +144,6 @@ const Timer = ({ settings, darkMode }) => {
 
   const { type, num } = formatPhase(timer.phase);
   const focusTextColor = darkMode ? 'text-gray-200' : 'text-gray-800';
-  // Function to manually refresh timer state from storage
-  const refreshTimerState = () => {
-    chrome.storage.sync.get(['timer'], (data) => {
-      if (data.timer) {
-        console.log('Manually refreshing timer:', data.timer);
-        setTimer(data.timer);
-      }
-    });
-  };
 
   return (
     <div
@@ -247,7 +153,7 @@ const Timer = ({ settings, darkMode }) => {
     >
       {focusMode ? (
         <div className="text-center animate-fade-in">
-          <h2 className={`text-6xl font-extrabold mb-6 ${focusTextColor}`}>{formatTime(timer.timeLeft)}</h2>
+          <h2 className={`text-6xl font-extrabold mb-6 ${focusTextColor}`}>{formatTime(timeLeft)}</h2>
           <p className={`text-2xl font-medium ${focusTextColor} mb-4`}>
             {type}{' '}
             <span className="bg-gradient-to-r from-blue-400 to-purple-500 text-transparent bg-clip-text">
@@ -264,20 +170,9 @@ const Timer = ({ settings, darkMode }) => {
         </div>
       ) : (
         <div className="space-y-5">
-          <div className="flex justify-between items-center">
-            <h2 className="text-2xl font-semibold font-sans">Pomodoro Timer</h2>
-            <button
-              onClick={refreshTimerState}
-              className="p-2 rounded-full bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600"
-              title="Refresh timer state"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
-          </div>
+          <h2 className="text-2xl font-semibold font-sans">Pomodoro Timer</h2>
           <div className="text-5xl font-bold text-center py-4 bg-gradient-to-r from-blue-400 to-purple-500 text-transparent bg-clip-text">
-            {formatTime(timer.timeLeft)}
+            {formatTime(timeLeft)}
           </div>
           <div className="flex items-center justify-center space-x-2">
             <p className="text-lg text-center font-sans">

@@ -91,13 +91,13 @@ The project consists of several files, each with a specific role. Below is a det
   - Includes a date input (MM/YYYY) to jump to a specific month/year.
 - **Key Features**:
   - Date input text, placeholders, and separator are white in both light and dark themes.
-  - Uses `chrome.storage.sync` to retrieve study data and completed tasks.
+  - Uses `chrome.storage.local` to retrieve study data and completed tasks.
 
 ### 3. `background.js`
 - **Purpose**: Runs in the background to manage the timer and alarms.
 - **What It Does**:
   - Uses `chrome.alarms` to tick down the timer every second.
-  - Updates the timer state (time left, phase) and saves it to `chrome.storage.sync`.
+  - Updates the timer state (time left, phase) and saves it to `chrome.storage.local`.
   - Plays the alarm sound (`bell_sound.mp3` or a custom sound) when a session ends.
   - Transitions between phases (e.g., long study to short break).
   - Sends messages to update the popup or floating timer with the current time.
@@ -152,7 +152,7 @@ The project consists of several files, each with a specific role. Below is a det
 - When you click the extension icon, `dist/index.html` opens the popup, showing the timer, to-do list, calendar, and settings.
 - The timer is controlled by `background.js`, which runs in the background and updates the timer state every second.
 - `Settings.js` lets you customize session lengths and upload a new alarm sound, which `background.js` uses when a session ends.
-- `Calendar.js` displays your study history, pulling data from `chrome.storage.sync`.
+- `Calendar.js` displays your study history, pulling data from `chrome.storage.local`.
 - `floatingTimer.js` shows a small timer on any webpage, syncing with the timer state from `background.js`.
 - `manifest.json` ties everything together, ensuring Chrome knows which files to load and what permissions are needed.
 - `styles/tailwind.css` ensures the entire extension looks polished and consistent.
