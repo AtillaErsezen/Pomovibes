@@ -290,18 +290,31 @@ describe('published extension: alarms no sooner than 30 seconds out', () => {
     expect(bells()).toHaveLength(8);
   });
 
-  test('resuming with 10 seconds left: the late alarm is covered by the popup check at 0:00', async () => {
+  test('resuming with 10 seconds left and nothing open: the bell still rings at 0:00, not 30s later', async () => {
     await start();
     await passTime(1490);
     await stop();
     await start();
-    expect(alarm().scheduledTime).toBe(Date.now() + 30000); // Chrome pushes it to 30s
-    await passTime(10);
-    expect(bells()).toHaveLength(0); // alarm not due yet
-    await checkTimer(); // popup / floating timer hit 0:00
+    expect(alarm().scheduledTime).toBe(Date.now() + 30000); // Chrome pushes the alarm to 30s
+    await passTime(9);
+    expect(bells()).toHaveLength(0);
+    await passTime(1);
     expect(bells()).toHaveLength(1);
+    expect(timer().phase).toBe('shortBreak1');
     await passTime(20);
     expect(bells()).toHaveLength(1); // the late alarm finds nothing to do
+  });
+
+  test('the popup check at 0:00 and the short timeout together still ring once', async () => {
+    await start();
+    await passTime(1490);
+    await stop();
+    await start();
+    jest.setSystemTime(Date.now() + 10000);
+    await checkTimer(); // popup hits 0:00 first
+    await passTime(0); // then the timeout fires
+    await passTime(20); // then the late alarm
+    expect(bells()).toHaveLength(1);
   });
 });
 

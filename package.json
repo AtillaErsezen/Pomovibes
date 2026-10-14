@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "scripts": {
     "build": "parcel build src/index.html --dist-dir dist --public-url ./",
-    "test": "jest"
+    "test": "jest",
+    "package": "rm -rf dist .parcel-cache pomovibes.zip && npm run build && zip -r pomovibes.zip manifest.json background.js dist src/offscreen.html src/components/offscreen.js src/content assets -x 'dist/*.map' assets/Pomodoro_Logo.png"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^16.0.1",
