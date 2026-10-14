@@ -177,6 +177,10 @@ function saveTimer(timer, done) {
       };
       if (timer.state === 'running') {
         chrome.alarms.create(PHASE_ALARM, { when: timer.endsAt }, finish);
+        // Published builds can't fire alarms sooner than 30s out; a short timeout covers that
+        // (the worker stays alive that long after this event; the alarm remains the backup)
+        const msLeft = timer.endsAt - Date.now();
+        if (msLeft < 30000) setTimeout(finishPhaseIfDue, Math.max(0, msLeft));
       } else {
         finish();
       }

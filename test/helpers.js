@@ -28,17 +28,31 @@ const trackedSetInterval = (...args) => {
   scriptIntervals.push(id);
   return id;
 };
+// The background's timeouts run on the test clock: they fire when passTime() reaches them
+let clockTimeouts = [];
+const clockSetTimeout = (fn, ms = 0) => {
+  clockTimeouts.push({ at: Date.now() + ms, fn });
+};
+function runDueTimeouts() {
+  const due = clockTimeouts.filter((t) => t.at <= Date.now());
+  clockTimeouts = clockTimeouts.filter((t) => t.at > Date.now());
+  due.forEach((t) => chrome._runIn('background', t.fn));
+}
+
 function unloadScripts() {
   scriptIntervals.splice(0).forEach(clearInterval);
+  clockTimeouts = [];
 }
 
 // Runs a plain (non-bundled) extension script, the way Chrome would, in its own context
-function runScript(file, context) {
+function runScript(file, context, timeout = setTimeout) {
   const source = read(file);
-  chrome._runIn(context, () => new Function('chrome', 'setInterval', source)(chrome, trackedSetInterval));
+  chrome._runIn(context, () =>
+    new Function('chrome', 'setInterval', 'setTimeout', source)(chrome, trackedSetInterval, timeout)
+  );
 }
 
-const loadBackground = () => runScript('background.js', 'background');
+const loadBackground = () => runScript('background.js', 'background', clockSetTimeout);
 const loadFloatingTimer = () => runScript('src/content/floatingTimer.js', 'content');
 
 // Moves the (frozen) clock forward and fires any alarm that is now due
@@ -46,10 +60,12 @@ async function passTime(seconds, { inAct = false } = {}) {
   jest.setSystemTime(Date.now() + seconds * 1000);
   if (inAct) {
     await act(async () => {
+      runDueTimeouts();
       chrome._runDueAlarms();
     });
     await settle();
   } else {
+    runDueTimeouts();
     chrome._runDueAlarms();
     await flush();
   }
