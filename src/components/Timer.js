@@ -116,7 +116,8 @@ const Timer = ({ settings, darkMode }) => {
   };
 
   const resetTimer = () => {
-    setTimer({ state: 'stopped', timeLeft: study * 60, phase: 'study1' });
+    // The background picks the study number (today's completed sessions + 1) and sends it right back
+    setTimer((prev) => ({ state: 'stopped', timeLeft: study * 60, phase: prev.phase }));
     chrome.runtime.sendMessage({ type: 'RESET_TIMER' });
   };
 

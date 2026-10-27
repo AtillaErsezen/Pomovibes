@@ -91,6 +91,35 @@ describe('start / stop / reset', () => {
     expect(alarm()).toBeUndefined();
   });
 
+  test('reset goes to study (sessions completed today + 1)', async () => {
+    await start();
+    await reset(); // nothing completed yet
+    expect(timer().phase).toBe('study1');
+    await start();
+    await finishPhase(); // study 1 done → short break
+    await reset();
+    expect(timer().phase).toBe('study2');
+    await start();
+    await passTime(100);
+    await reset(); // study 2 not finished
+    expect(timer().phase).toBe('study2');
+    await start();
+    await finishPhase();
+    await reset();
+    expect(timer().phase).toBe('study3');
+  });
+
+  test('the study number keeps counting past 4 and starts over the next day', async () => {
+    chrome.storage.local._seed({ sessions: { completedSessions: { [today()]: 5 } } });
+    await reset();
+    expect(timer().phase).toBe('study6');
+    setNow(START + 24 * 3600 * 1000);
+    await start(); // a leftover study takes today's number
+    expect(timer().phase).toBe('study1');
+    await reset();
+    expect(timer().phase).toBe('study1');
+  });
+
   test('an invalid saved study length falls back to 25 minutes', async () => {
     setSettings({ study: null });
     await reset();
@@ -140,7 +169,7 @@ describe('end of a phase', () => {
     expect(bells()[0].message.audioSource).toBe('data:audio/mpeg;base64,AAAA');
   });
 
-  test('phases follow study → short break ×3 → long break → study', async () => {
+  test('phases follow study → short break ×3 → long break → study, numbered by today\'s count', async () => {
     setSettings({ study: 30, shortBreak: 7, longBreak: 20 });
     await reset();
     await start();
@@ -151,7 +180,7 @@ describe('end of a phase', () => {
     }
     expect(seen).toEqual([
       ['shortBreak1', 420], ['study2', 1800], ['shortBreak2', 420], ['study3', 1800],
-      ['shortBreak3', 420], ['study4', 1800], ['longBreak', 1200], ['study1', 1800],
+      ['shortBreak3', 420], ['study4', 1800], ['longBreak', 1200], ['study5', 1800],
     ]);
     expect(bells()).toHaveLength(8);
     expect(sessions().completedSessions[today()]).toBe(4);

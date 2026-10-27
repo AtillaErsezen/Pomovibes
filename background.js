@@ -18,9 +18,9 @@ const DEFAULT_STUDY_MINUTES = 25;
 // chrome.storage.sync so they follow the user across devices.
 const LOCAL_KEYS = ['timer', 'lastPhase', 'tasks', 'customCategories', 'lastUsedCategory', 'completedTasks', 'sessions'];
 
-// Reads the timer (local) and settings (sync) together
+// Reads the timer and sessions (local) and settings (sync) together
 function getTimerAndSettings(callback) {
-  chrome.storage.local.get(['timer'], (localData) => {
+  chrome.storage.local.get(['timer', 'sessions'], (localData) => {
     chrome.storage.sync.get(['settings'], (syncData) => {
       callback({ ...localData, ...syncData });
     });
@@ -152,19 +152,16 @@ function durationsFrom(settings) {
   };
 }
 
-function nextPhaseFor(phase, settings) {
+// Study phases are numbered by today's completed study sessions + 1, so the count starts
+// over each day; every 4th study is followed by the long break
+const completedToday = (sessions) => sessions?.completedSessions?.[toLocalDateKey()] || 0;
+const studyPhase = (sessions) => `study${completedToday(sessions) + 1}`;
+
+function nextPhaseFor(phase, settings, sessions) {
   const { study, shortBreak, longBreak } = durationsFrom(settings);
-  const phases = {
-    study1:      ['shortBreak1', shortBreak * 60],
-    shortBreak1: ['study2',      study * 60],
-    study2:      ['shortBreak2', shortBreak * 60],
-    shortBreak2: ['study3',      study * 60],
-    study3:      ['shortBreak3', shortBreak * 60],
-    shortBreak3: ['study4',      study * 60],
-    study4:      ['longBreak',   longBreak * 60],
-    longBreak:   ['study1',      study * 60],
-  };
-  return phases[phase] || ['study1', study * 60];
+  const n = Number(phase?.match(/^study(\d+)$/)?.[1]);
+  if (n) return n % 4 === 0 ? ['longBreak', longBreak * 60] : [`shortBreak${n}`, shortBreak * 60];
+  return [studyPhase(sessions), study * 60];
 }
 
 // Saves the timer, schedules (or clears) the end-of-phase alarm, and tells the popup
@@ -234,7 +231,7 @@ function finishPhaseIfDue() {
       console.log('Session ended, playing bell sound');
       playBell();
 
-      const [nextPhase, nextTime] = nextPhaseFor(timer.phase, data.settings);
+      const [nextPhase, nextTime] = nextPhaseFor(timer.phase, data.settings, data.sessions);
       console.log('Transitioned to next phase:', nextPhase);
       saveTimer(
         {
@@ -326,6 +323,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         saveTimer(
           {
             ...timer,
+            // A study left over from an earlier day takes today's number
+            phase: timer.phase.startsWith('study') ? studyPhase(data.sessions) : timer.phase,
             state: 'running',
             // Remember the length this session started with (kept through pause/resume)
             duration: timer.duration ?? timer.timeLeft,
@@ -354,9 +353,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   } else if (message.type === 'RESET_TIMER') {
     queueTimerTask((done) => {
-      chrome.storage.sync.get(['settings'], (data) => {
+      getTimerAndSettings((data) => {
         const { study } = durationsFrom(data.settings);
-        saveTimer({ state: 'stopped', timeLeft: study * 60, phase: 'study1' }, () => {
+        saveTimer({ state: 'stopped', timeLeft: study * 60, phase: studyPhase(data.sessions) }, () => {
           sendResponse({ success: true });
           done();
         });
