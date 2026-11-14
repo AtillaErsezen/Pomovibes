@@ -35,7 +35,7 @@ const renderTimer = async (settings = DEFAULTS) => {
 // What saving in Settings does: store the new settings and pass them down from App
 const changeSettings = async (changes) => {
   const settings = { ...DEFAULTS, ...changes };
-  chrome.storage.sync._seed({ settings });
+  chrome.storage.sync.set({ settings });
   rerender(<Timer settings={settings} darkMode={false} />);
   await settle();
 };
@@ -236,13 +236,23 @@ describe('published extension (alarms no sooner than 30 seconds out)', () => {
 });
 
 describe('changing settings combined with the controls', () => {
-  test('changing study length while stopped at the start: shows the old time until Reset', async () => {
+  test('changing study length while stopped at the start: shows the new time without Reset', async () => {
     await renderTimer();
     await changeSettings({ study: 50 });
-    expect(display()).toBe('25:00');
-    await click('Reset');
     expect(display()).toBe('50:00');
-    expect(stored().timeLeft).toBe(3000);
+    expect(stored()).toEqual({ state: 'stopped', timeLeft: 3000, phase: 'study1' });
+    await click('Start');
+    await wait(secondsToEnd());
+    expect(local().sessions[today()]).toBe(50);
+  });
+
+  test('changing study length after a reset mid-session also applies without another Reset', async () => {
+    await renderTimer();
+    await click('Start');
+    await wait(5);
+    await click('Reset');
+    await changeSettings({ study: 15 });
+    expect(display()).toBe('15:00');
   });
 
   test('changing study length while running does not change the running session', async () => {

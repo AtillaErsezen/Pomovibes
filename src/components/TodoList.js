@@ -15,6 +15,8 @@ const TodoList = ({ darkMode }) => {  const TODO_MAX_LENGTH = 50;
     { name: 'Health', color: 'mint' },
   ])
   const [isModalOpen, setIsModalOpen] = useState(false)
+  // Don't save anything until the saved data has loaded, or the empty defaults overwrite it
+  const [loaded, setLoaded] = useState(false)
   const [newCategory, setNewCategory] = useState('')
   
   // Define CSS color variables
@@ -46,49 +48,34 @@ const TodoList = ({ darkMode }) => {  const TODO_MAX_LENGTH = 50;
       });
     };
   }, []);    useEffect(() => {
-    chrome.storage.local.get(['tasks', 'customCategories'], result => {
+    chrome.storage.local.get(['tasks', 'customCategories', 'lastUsedCategory'], result => {
       if (result.tasks) {
         setTasks(result.tasks);
       }
-      if (result.customCategories) {
-        setCustomCategories(result.customCategories);
-        
-        // Set the current category based on saved categories
-        if (result.customCategories.length > 0) {
-          // Find the last used category if possible
-          chrome.storage.local.get(['lastUsedCategory'], lastCategoryResult => {
-            if (lastCategoryResult.lastUsedCategory) {
-              // Check if the last used category still exists
-              const categoryExists = result.customCategories.some(
-                cat => cat.name === lastCategoryResult.lastUsedCategory
-              );
-              if (categoryExists) {
-                setCategory(lastCategoryResult.lastUsedCategory);
-              } else {
-                // Fall back to the first available category
-                setCategory(result.customCategories[0].name);
-              }
-            } else {
-              // No last used category, use the first one
-              setCategory(result.customCategories[0].name);
-            }
-          });
+      const categories = result.customCategories;
+      if (categories) {
+        setCustomCategories(categories);
+        // Use the last used category if it still exists, otherwise the first one
+        if (categories.length > 0) {
+          const lastUsed = categories.some(cat => cat.name === result.lastUsedCategory);
+          setCategory(lastUsed ? result.lastUsedCategory : categories[0].name);
         }
       }
+      setLoaded(true);
     });
   }, []);
 
-   useEffect(() => {
-    chrome.storage.local.set({ tasks });
-  }, [tasks]);
-    useEffect(() => {
-    chrome.storage.local.set({ customCategories });
-  }, [customCategories]);
-  
+  useEffect(() => {
+    if (loaded) chrome.storage.local.set({ tasks });
+  }, [tasks, loaded]);
+  useEffect(() => {
+    if (loaded) chrome.storage.local.set({ customCategories });
+  }, [customCategories, loaded]);
+
   // Save the current category when it changes
   useEffect(() => {
-    chrome.storage.local.set({ lastUsedCategory: category });
-  }, [category]);
+    if (loaded) chrome.storage.local.set({ lastUsedCategory: category });
+  }, [category, loaded]);
 
   const colorPalette = [
     'coral', 'teal', 'lavender', 'mint', 'amber',
@@ -115,8 +102,11 @@ const TodoList = ({ darkMode }) => {  const TODO_MAX_LENGTH = 50;
     }
     
     if (newTask.trim() && taskCategory) {
-      const item = { id: Date.now(), content: newTask.trim(), category: taskCategory, done: false }
-      setTasks(prev => [...prev, item])
+      const content = newTask.trim()
+      // Time-based id, bumped past existing ids so two adds in the same millisecond still differ
+      setTasks(prev => [...prev, {
+        id: Math.max(Date.now(), ...prev.map(t => t.id + 1)), content, category: taskCategory, done: false,
+      }])
       setNewTask('')
     }
   }

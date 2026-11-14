@@ -270,6 +270,21 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onStartup.addListener(ensureTimerScheduled);
 
+// A new study length applies right away to a study that hasn't started yet
+// (no duration); a running or paused session keeps the length it started with
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'sync' || !changes.settings) return;
+  queueTimerTask((done) => {
+    getTimerAndSettings((data) => {
+      const timer = data.timer;
+      if (!timer || timer.state !== 'stopped' || timer.duration !== undefined || !timer.phase?.startsWith('study')) return done();
+      const timeLeft = durationsFrom(data.settings).study * 60;
+      if (timer.timeLeft === timeLeft) return done();
+      saveTimer({ ...timer, timeLeft }, done);
+    });
+  });
+});
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === PHASE_ALARM) {
     finishPhaseIfDue();
