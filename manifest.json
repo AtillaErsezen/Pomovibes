@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Pomovibes",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A relaxing, aesthetic Pomodoro timer with study tracking and to-do list.",
   "permissions": [
     "storage",
